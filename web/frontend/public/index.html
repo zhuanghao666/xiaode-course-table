@@ -1,0 +1,2420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小德课表</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.js"></script>
+  <style>
+    :root{
+      --bg1:#eef1f2;--bg2:#d9dfe2;--bg3:#d7d0d2;--text:#46515e;--muted:#75808c;--line:#d8dde4;--card:rgba(255,255,255,.82);--accent:#8f84a8;--accent-strong:#7f76a4;--accent2:#c8ab93;--head1:#978fad;--head2:#aab8c4;--head-today1:#c7b2b6;--head-today2:#ac9db6;--shadow:0 18px 44px rgba(98,107,124,.12);--r:26px;
+      --public_required:linear-gradient(135deg,#a7b6c0,#93a4ae);--major_required:linear-gradient(135deg,#b0bbb0,#98a697);--major_elective:linear-gradient(135deg,#c9b4a5,#bba08f);--public_elective:linear-gradient(135deg,#b8aec1,#9e95ad);--lab:linear-gradient(135deg,#c5abaf,#af9397);--custom:linear-gradient(135deg,#c1b7a2,#ab9d84)
+    }
+    body[data-theme="fruit"]{--bg1:#fff8ee;--bg2:#ffe8d0;--bg3:#e9f7e7;--text:#3e4a3f;--muted:#77816f;--card:rgba(255,255,255,.86);--accent:#ff8a65;--accent-strong:#e86f4d;--accent2:#7bc96f;--head1:#ffb36b;--head2:#7bc96f;--head-today1:#ff9f7a;--head-today2:#75c96e;--public_required:linear-gradient(135deg,#ffb36b,#ff8a65);--major_required:linear-gradient(135deg,#7bd88f,#45b879);--major_elective:linear-gradient(135deg,#ffd166,#f6a93b);--public_elective:linear-gradient(135deg,#7cc7ff,#5aa9e6);--lab:linear-gradient(135deg,#ff85a1,#e86b8f);--custom:linear-gradient(135deg,#b39ddb,#8e77c8)}
+    body[data-theme="morandi"]{--bg1:#eef1f2;--bg2:#d9dfe2;--bg3:#d7d0d2;--text:#46515e;--muted:#75808c;--accent:#8f84a8;--accent-strong:#7f76a4;--accent2:#c8ab93;--head1:#978fad;--head2:#aab8c4;--head-today1:#c7b2b6;--head-today2:#ac9db6;--public_required:linear-gradient(135deg,#a7b6c0,#93a4ae);--major_required:linear-gradient(135deg,#b0bbb0,#98a697);--major_elective:linear-gradient(135deg,#c9b4a5,#bba08f);--public_elective:linear-gradient(135deg,#b8aec1,#9e95ad);--lab:linear-gradient(135deg,#c5abaf,#af9397);--custom:linear-gradient(135deg,#c1b7a2,#ab9d84)}
+    body[data-theme="minimal"]{--bg1:#fbfbfa;--bg2:#f4f5f6;--bg3:#eceff1;--text:#1f2328;--muted:#6b7280;--line:#e5e7eb;--card:rgba(255,255,255,.96);--accent:#111827;--accent-strong:#05070b;--accent2:#9ca3af;--head1:#f3f4f6;--head2:#e5e7eb;--head-today1:#111827;--head-today2:#374151;--shadow:0 10px 28px rgba(31,35,40,.07);--public_required:linear-gradient(135deg,#111827,#374151);--major_required:linear-gradient(135deg,#4b5563,#6b7280);--major_elective:linear-gradient(135deg,#6b7280,#9ca3af);--public_elective:linear-gradient(135deg,#9ca3af,#6b7280);--lab:linear-gradient(135deg,#2f343d,#111827);--custom:linear-gradient(135deg,#d1d5db,#9ca3af)}
+    body[data-theme="ocean"]{--bg1:#edfaff;--bg2:#d6eff7;--bg3:#d7e5f5;--text:#34495e;--muted:#668395;--accent:#3ba7c8;--accent-strong:#2182a4;--accent2:#75b6a5;--head1:#5cc8e5;--head2:#75c9b7;--head-today1:#8ab6f9;--head-today2:#3ba7c8;--public_required:linear-gradient(135deg,#5cc8e5,#3898c6);--major_required:linear-gradient(135deg,#75c9b7,#4aa898);--major_elective:linear-gradient(135deg,#8ab6f9,#5b8def);--public_elective:linear-gradient(135deg,#9ddfd3,#6bb8aa);--lab:linear-gradient(135deg,#a4a6f5,#7c83e6);--custom:linear-gradient(135deg,#7dcfb6,#4ea699)}
+    body[data-theme="night"]{--bg1:#151922;--bg2:#202633;--bg3:#2b2635;--text:#eef2f6;--muted:#a8b0bb;--line:#394252;--card:rgba(32,38,51,.82);--accent:#8d80d7;--accent-strong:#6657bd;--accent2:#d39c7f;--head1:#6178a8;--head2:#66518d;--head-today1:#9d6674;--head-today2:#7c4c5b;--public_required:linear-gradient(135deg,#6178a8,#405e92);--major_required:linear-gradient(135deg,#6e927e,#4d7560);--major_elective:linear-gradient(135deg,#b9866d,#915e4b);--public_elective:linear-gradient(135deg,#8473a8,#66518d);--lab:linear-gradient(135deg,#9d6674,#7c4c5b);--custom:linear-gradient(135deg,#897b5e,#6c5c44)}
+    body[data-theme="sakura"]{--bg1:#fff5f8;--bg2:#f9dce8;--bg3:#e9eefc;--text:#4b3d49;--muted:#866f7d;--line:#ead6df;--card:rgba(255,255,255,.86);--accent:#e889a8;--accent-strong:#c86d90;--accent2:#9bb7e8;--head1:#f0a9bd;--head2:#b8c7ee;--head-today1:#e889a8;--head-today2:#9bb7e8;--public_required:linear-gradient(135deg,#f0a9bd,#dc789d);--major_required:linear-gradient(135deg,#9fc8ad,#73aa87);--major_elective:linear-gradient(135deg,#f4c982,#e6a95f);--public_elective:linear-gradient(135deg,#a9c3f4,#839fe0);--lab:linear-gradient(135deg,#efa0c4,#d878aa);--custom:linear-gradient(135deg,#cdb5f0,#a98bda)}
+    body[data-theme="matcha"]{--bg1:#f4f8ed;--bg2:#ddebd0;--bg3:#f3ead9;--text:#3f4b3c;--muted:#73806b;--line:#d7e3cd;--card:rgba(255,255,255,.84);--accent:#86a96f;--accent-strong:#66884f;--accent2:#c2a272;--head1:#9dbb84;--head2:#c5b07a;--head-today1:#8fb37a;--head-today2:#d0b882;--public_required:linear-gradient(135deg,#a7c48f,#86a96f);--major_required:linear-gradient(135deg,#8fbf93,#6a9d70);--major_elective:linear-gradient(135deg,#d7bd7b,#b99652);--public_elective:linear-gradient(135deg,#a6c8b7,#78a493);--lab:linear-gradient(135deg,#d2a58f,#bd816b);--custom:linear-gradient(135deg,#b8aa84,#93855e)}
+    body[data-theme="lavender"]{--bg1:#f7f2ff;--bg2:#e7ddfb;--bg3:#dfeaf8;--text:#463f59;--muted:#766c8e;--line:#ddd3ee;--card:rgba(255,255,255,.85);--accent:#a18ad7;--accent-strong:#7f68bd;--accent2:#91b6d8;--head1:#b19be5;--head2:#91b6d8;--head-today1:#c19adf;--head-today2:#9e8fd8;--public_required:linear-gradient(135deg,#b19be5,#8a73d1);--major_required:linear-gradient(135deg,#93c7b0,#6fae91);--major_elective:linear-gradient(135deg,#f1bf7d,#dc9861);--public_elective:linear-gradient(135deg,#91b6d8,#6d9ec8);--lab:linear-gradient(135deg,#d69fc9,#b97db2);--custom:linear-gradient(135deg,#c9b7ed,#a58ad8)}
+    body[data-theme="sunset"]{--bg1:#fff2e5;--bg2:#ffd7bf;--bg3:#eadcf9;--text:#55423d;--muted:#836d66;--line:#efd7cb;--card:rgba(255,255,255,.86);--accent:#f08a6c;--accent-strong:#d86950;--accent2:#b889d8;--head1:#f39b70;--head2:#b889d8;--head-today1:#ffb36f;--head-today2:#d77777;--public_required:linear-gradient(135deg,#f39b70,#e2765b);--major_required:linear-gradient(135deg,#8bc6a0,#5fae80);--major_elective:linear-gradient(135deg,#ffc371,#f08a4b);--public_elective:linear-gradient(135deg,#b889d8,#8d78c9);--lab:linear-gradient(135deg,#ef8aa2,#d96d8e);--custom:linear-gradient(135deg,#c7a0e8,#a780d2)}
+    body[data-theme="aurora"]{--bg1:#eefcff;--bg2:#d7f4ed;--bg3:#e7e1ff;--text:#344a54;--muted:#668089;--line:#cfe3e6;--card:rgba(255,255,255,.84);--accent:#65c8c7;--accent-strong:#3ba7a8;--accent2:#8c91e8;--head1:#65c8c7;--head2:#8c91e8;--head-today1:#7ad8ad;--head-today2:#6fa4ef;--public_required:linear-gradient(135deg,#67d0d0,#3ca4b5);--major_required:linear-gradient(135deg,#7ad8ad,#4fb68c);--major_elective:linear-gradient(135deg,#ffd36a,#f0aa45);--public_elective:linear-gradient(135deg,#89b8ff,#6e8fe8);--lab:linear-gradient(135deg,#cf91e8,#a978da);--custom:linear-gradient(135deg,#7dcfb6,#4ea699)}
+    body[data-theme="latte"]{--bg1:#fbf4ea;--bg2:#ead8c2;--bg3:#dfe5dc;--text:#4f4439;--muted:#7e7062;--line:#e1cfba;--card:rgba(255,255,255,.84);--accent:#b9875e;--accent-strong:#936846;--accent2:#8ba487;--head1:#c79a72;--head2:#9caf95;--head-today1:#d2ab82;--head-today2:#b9875e;--public_required:linear-gradient(135deg,#c79a72,#a87450);--major_required:linear-gradient(135deg,#9caf95,#758f70);--major_elective:linear-gradient(135deg,#e4c079,#c99d52);--public_elective:linear-gradient(135deg,#91a9b0,#6f8d96);--lab:linear-gradient(135deg,#c88b83,#a96b65);--custom:linear-gradient(135deg,#bba98c,#927f62)}
+    *{box-sizing:border-box} html,body{margin:0;padding:0}
+    body{font-family:"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;color:var(--text);background:radial-gradient(circle at 10% 15%, rgba(183,194,206,.42), transparent 24%),radial-gradient(circle at 88% 8%, rgba(182,173,196,.34), transparent 26%),radial-gradient(circle at 82% 86%, rgba(203,188,177,.34), transparent 24%),linear-gradient(135deg,var(--bg1),var(--bg2) 58%,var(--bg3));min-height:100vh}
+    .wrap{max-width:1480px;margin:0 auto;padding:18px;position:relative}
+    .card{background:var(--card);border:1px solid rgba(255,255,255,.62);border-radius:30px;box-shadow:var(--shadow);backdrop-filter:blur(18px)}
+    .hidden{display:none!important}
+    .hero{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;padding:24px 28px;align-items:center;margin-bottom:16px}
+    .title{font-size:clamp(34px,5vw,56px);font-weight:900;letter-spacing:-.05em;line-height:1.05}
+    .sub,.muted{color:var(--muted);font-weight:700;line-height:1.7}.sub{margin-top:10px}
+    .right{text-align:right}.pill{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;background:linear-gradient(135deg,#d6c2ad,#ccb09a);color:#61534d;font-size:14px;font-weight:900}.pill::before{content:"";width:9px;height:9px;border-radius:50%;background:#8d6650}
+    .next-title{font-size:30px;font-weight:900;margin-top:16px;line-height:1.18}.next-meta{margin-top:8px;color:#66707c;font-size:18px;font-weight:700}
+    .auth{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:18px}.panel{background:rgba(255,255,255,.56);border:1px solid rgba(255,255,255,.6);border-radius:24px;padding:18px}.panel h3{margin:0 0 8px;font-size:22px}.panel p{margin:0 0 14px;color:var(--muted);line-height:1.7}
+    .row{display:grid;gap:6px;margin-bottom:10px}.row label{font-size:13px;font-weight:800;color:#5f6975}
+    input,select,textarea{width:100%;padding:11px 12px;border-radius:14px;border:1px solid rgba(183,190,198,.7);background:rgba(255,255,255,.9);font:inherit;color:var(--text)} textarea{min-height:120px;resize:vertical}
+    .btn{border:0;cursor:pointer;font:inherit;transition:.2s ease;border-radius:999px;padding:10px 14px;font-weight:800}.btn:hover{transform:translateY(-1px)} .primary{background:linear-gradient(135deg,var(--accent),#7f76a4);color:#fff}.ghost{background:rgba(255,255,255,.78);color:var(--text)} .danger{background:linear-gradient(135deg,#c47a7a,#ab6262);color:#fff}
+    .bar{display:grid;grid-template-columns:64px 1fr auto auto auto 64px;gap:12px;align-items:center;padding:16px 20px;margin-bottom:16px}.nav{width:50px;height:50px;padding:0;border-radius:50%;font-size:22px}
+    .badge{display:inline-flex;padding:8px 13px;border-radius:999px;color:#fff;font-size:13px;font-weight:800;background:linear-gradient(135deg,#9fb1bf,#899cad);margin-left:10px}.badge.current{background:linear-gradient(135deg,#cdb296,#c0997d)}
+    .week-strip{display:flex;gap:9px;overflow:auto;padding-bottom:4px;scrollbar-width:none}.week-strip::-webkit-scrollbar{display:none}.chip{min-width:42px;height:42px;display:grid;place-items:center;border-radius:999px;color:#65707b;font-weight:900;background:rgba(255,255,255,.48);cursor:pointer;border:1px solid rgba(181,188,196,.28)}.chip.active{color:#fff;background:linear-gradient(135deg,var(--accent),#7f76a4)}
+    .mode{display:inline-flex;gap:6px;padding:6px;border-radius:999px;background:rgba(255,255,255,.64)}.mode .btn{padding:8px 12px;background:transparent;color:#66707a}.mode .btn.active{color:#fff;background:linear-gradient(135deg,var(--accent),#7f76a4)}
+    .section{padding:18px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;color:#6f7883;font-size:14px;font-weight:700}.legend,.actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}.dot{display:inline-block;width:12px;height:12px;border-radius:4px;margin-right:6px;vertical-align:middle}
+    .table{display:grid;grid-template-columns:170px repeat(7,minmax(140px,1fr));border-radius:24px;overflow:hidden;background:rgba(255,255,255,.54);border:1px solid rgba(255,255,255,.5)}
+    .head{min-height:100px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:900;background:linear-gradient(135deg,#978fad,#aab8c4);border-right:1px solid rgba(255,255,255,.12)} .head.today{background:linear-gradient(135deg,#c7b2b6,#ac9db6)}
+    .timecell,.slot{min-height:138px;border-top:1px solid rgba(216,222,229,.8);border-right:1px solid rgba(216,222,229,.8)} .timecell{padding:18px 16px;background:rgba(255,255,255,.8)} .slot{padding:10px;background:rgba(255,255,255,.86)} .slot.today{background:linear-gradient(180deg,rgba(232,224,229,.35),rgba(255,255,255,.92))}
+    .course{height:100%;border-radius:18px;padding:14px;color:#fff;display:flex;flex-direction:column;justify-content:center;text-align:center;position:relative;cursor:pointer;box-shadow:0 10px 24px rgba(103,111,124,.12)} .course.current{box-shadow:0 0 0 4px rgba(255,255,255,.86),0 14px 24px rgba(103,111,124,.16)} .course.soon{box-shadow:0 0 0 4px rgba(210,181,145,.65),0 14px 24px rgba(170,138,104,.15)}
+    .slot.merged{display:flex;align-items:stretch}.slot.stacked{display:grid;gap:5px;align-content:stretch}.slot.stacked .course{height:auto;min-height:0;border-radius:12px;padding:7px 4px}.slot.stacked .name{font-size:12px;line-height:1.18;margin-bottom:3px}.slot.stacked .meta2{font-size:10px;line-height:1.25}.merge-count{position:absolute;left:7px;top:7px;border-radius:999px;padding:2px 6px;background:rgba(255,255,255,.24);font-size:10px;font-weight:950}.merge-span{margin-top:5px;font-size:10px;font-weight:900;opacity:.86}
+    .mark{position:absolute;top:8px;right:8px;border-radius:999px;padding:4px 8px;background:rgba(255,255,255,.22);font-size:11px;font-weight:900}.name{font-size:16px;font-weight:900;line-height:1.3;margin-bottom:8px}.meta2{font-size:13px;line-height:1.55;font-weight:700}.empty{height:100%;border-radius:16px;background:rgba(255,255,255,.38)} .empty-slot{height:100%;border-radius:16px;background:rgba(255,255,255,.24);border:0;pointer-events:none}
+    .mobile{display:none;gap:12px;margin-top:16px}.mday{padding:16px}.mday-title{font-size:17px;font-weight:900;margin-bottom:8px}
+    .drawer{margin-top:16px;padding:18px}.drawer-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.form-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.inline{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .mini-table{width:100%;border-collapse:collapse;font-size:13px}.mini-table th,.mini-table td{border-bottom:1px solid rgba(209,215,224,.8);padding:8px 6px;text-align:left}
+    .modal,.backdrop{position:fixed;inset:0;z-index:50}.backdrop{background:rgba(31,37,46,.28)}.modal{display:grid;place-items:center;padding:18px}.modal-card{width:min(920px,96vw);max-height:90vh;overflow:auto;background:rgba(255,255,255,.96);border-radius:28px;padding:22px;box-shadow:0 24px 60px rgba(61,70,85,.2)}.modal-top{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.modal-title{font-size:24px;font-weight:900}.detail{background:rgba(243,245,248,.9);border-radius:18px;padding:14px;line-height:1.8;font-size:15px}.tag{display:inline-flex;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),#7f76a4)}
+    .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(12px);background:rgba(73,81,93,.92);color:#fff;padding:12px 16px;border-radius:16px;box-shadow:0 14px 28px rgba(55,65,81,.18);font-size:14px;line-height:1.55;font-weight:700;opacity:0;pointer-events:none;transition:.22s ease;max-width:min(92vw,520px);text-align:center;z-index:60}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+    .auth{display:block;padding:18px}.auth-card{max-width:560px;margin:0 auto;background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.68);border-radius:28px;padding:20px}.auth-head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:16px}.auth-head h3{font-size:26px;margin:0}.auth-switch{border:0;background:transparent;color:var(--accent);font-weight:900;font-size:14px;padding:8px;cursor:pointer}.auth-card .inline{align-items:center}.auth-note{font-size:13px;color:var(--muted);font-weight:800;margin-top:12px}.auth-secondary{display:block;margin-top:12px;color:var(--accent);font-weight:900;text-decoration:none;cursor:pointer}
+    .feature-hub{margin-top:16px;padding:18px}.feature-title{font-size:22px;font-weight:900;margin-bottom:12px}.feature-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.feature-card{background:rgba(255,255,255,.58);border:1px solid rgba(255,255,255,.6);border-radius:24px;padding:16px}.feature-card h3{margin:0 0 10px;font-size:18px}.feature-actions{display:flex;gap:10px;flex-wrap:wrap}.feature-actions .btn{padding:9px 13px}.theme-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.theme-btn{border:1px solid rgba(160,170,182,.35);background:rgba(255,255,255,.78);border-radius:18px;padding:10px;cursor:pointer;text-align:left;font-weight:900;color:var(--text)}.theme-btn.active{outline:3px solid rgba(143,132,168,.35);background:rgba(255,255,255,.95)}.theme-swatch{display:flex;gap:5px;margin-top:7px}.theme-swatch i{display:block;width:22px;height:14px;border-radius:999px}
+    .quick-manage-anchor{scroll-margin-top:18px}
+
+    .main-actions-minor{display:none!important}
+    .bar>div:nth-child(2){display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:nowrap}.bar .badge{margin-left:0;white-space:nowrap}.bar .mode{justify-self:center}.feature-card p{margin:0 0 12px;color:var(--muted);font-weight:700;line-height:1.55}.feature-grid-v16{grid-template-columns:repeat(2,minmax(0,1fr))}.feature-card-primary{background:linear-gradient(135deg,rgba(255,255,255,.74),rgba(255,255,255,.5))}.icon-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.feature-tile{border:1px solid rgba(160,170,182,.32);border-radius:20px;background:rgba(255,255,255,.78);padding:12px 8px;min-height:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--text);font:inherit;font-weight:900;cursor:pointer}.feature-tile span{font-size:22px;line-height:1}.feature-tile b{font-size:13px}.primary-tile{background:linear-gradient(135deg,var(--accent),#7f76a4);color:#fff}.theme-card{grid-column:1/-1}#drawer .panel>h3{display:inline-flex;padding:8px 13px;border-radius:999px;background:rgba(255,255,255,.74);box-shadow:0 8px 18px rgba(80,90,108,.08)}#drawer .panel>p{padding:10px 12px;border-radius:18px;background:rgba(255,255,255,.45)}#termLine:empty{display:none}.toolbar:has(#termLine:empty) .legend{margin-left:auto}
+
+    /* v17: App 化收敛：隐藏冗余头图、当前功能面板、账号入口、全局主题联动 */
+    #heroSection{display:none!important}
+    #mainSection>.sub{display:none!important}
+    #termLine{display:none!important}
+    .account-avatar{position:absolute;right:16px;top:12px;z-index:12;width:34px;height:34px;border:0;border-radius:50%;background:linear-gradient(135deg,var(--accent),#7f76a4);color:#fff;font-size:17px;font-weight:900;box-shadow:0 8px 18px rgba(70,80,96,.14);cursor:pointer;display:grid;place-items:center;opacity:.92} .account-avatar:hover{transform:translateY(-1px);opacity:1}
+    .account-avatar.hidden{display:none!important}
+    .feature-hub{margin-top:16px}.feature-title{display:flex;align-items:center;justify-content:space-between}.feature-title small{font-size:13px;color:var(--muted);font-weight:800}
+    .feature-grid-v17{grid-template-columns:repeat(2,minmax(0,1fr))}.feature-card.compact-card{padding:14px}.feature-card.compact-card p{display:none}.feature-card.compact-card h3{margin-bottom:12px}.feature-actions.icon-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .quick-panel{margin-top:14px;padding:16px;border-radius:24px;background:rgba(255,255,255,.58);border:1px solid rgba(255,255,255,.62);box-shadow:0 12px 28px rgba(84,94,112,.08)}
+    .quick-panel.hidden{display:none!important}.quick-panel h3{margin:0 0 12px;font-size:20px}.quick-panel .hint{font-size:13px;color:var(--muted);font-weight:800;line-height:1.6;margin:0 0 12px}.quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.quick-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .account-list{display:grid;gap:10px}.account-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px;border:1px solid rgba(160,170,182,.3);border-radius:18px;background:rgba(255,255,255,.78)}.account-item b{display:block}.account-item small{color:var(--muted);font-weight:800}.avatar-dot{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),#7f76a4);color:#fff;font-weight:900;flex:0 0 auto}
+    #drawer #jwxtImportSection{display:none!important}#drawer .drawer-grid{grid-template-columns:1fr}.legacy-note{display:none!important}
+    .legacy-import-hidden{display:none!important}
+    #drawer .panel>p{display:none!important}
+    #drawer .panel>h3:nth-of-type(n+2){margin-top:14px}
+
+    body[data-theme="fruit"] .card,body[data-theme="fruit"] .feature-card,body[data-theme="fruit"] .quick-panel{box-shadow:0 18px 44px rgba(255,138,101,.14)}
+    body[data-theme="ocean"] .card,body[data-theme="ocean"] .feature-card,body[data-theme="ocean"] .quick-panel{box-shadow:0 18px 44px rgba(59,167,200,.13)}
+    body[data-theme="sakura"] .card,body[data-theme="sakura"] .feature-card,body[data-theme="sakura"] .quick-panel{box-shadow:0 18px 44px rgba(232,137,168,.14)}
+    body[data-theme="matcha"] .card,body[data-theme="matcha"] .feature-card,body[data-theme="matcha"] .quick-panel{box-shadow:0 18px 44px rgba(134,169,111,.14)}
+    body[data-theme="lavender"] .card,body[data-theme="lavender"] .feature-card,body[data-theme="lavender"] .quick-panel{box-shadow:0 18px 44px rgba(127,104,189,.13)}
+    body[data-theme="sunset"] .card,body[data-theme="sunset"] .feature-card,body[data-theme="sunset"] .quick-panel{box-shadow:0 18px 44px rgba(240,138,108,.14)}
+    body[data-theme="aurora"] .card,body[data-theme="aurora"] .feature-card,body[data-theme="aurora"] .quick-panel{box-shadow:0 18px 44px rgba(59,167,168,.13)}
+    body[data-theme="latte"] .card,body[data-theme="latte"] .feature-card,body[data-theme="latte"] .quick-panel{box-shadow:0 18px 44px rgba(185,135,94,.14)}
+    body[data-theme="night"] input,body[data-theme="night"] select,body[data-theme="night"] textarea{background:rgba(21,25,34,.82);color:var(--text);border-color:#465264}body[data-theme="night"] .theme-btn,body[data-theme="night"] .feature-tile{background:rgba(32,38,51,.9)}
+    body[data-theme="minimal"] .card,body[data-theme="minimal"] .feature-card,body[data-theme="minimal"] .quick-panel{border-color:rgba(17,24,39,.08);backdrop-filter:none}body[data-theme="minimal"] .head.today .day-main,body[data-theme="minimal"] .head.today .day-sub{color:#fff}body[data-theme="minimal"] .course{box-shadow:0 8px 18px rgba(17,24,39,.08)}body[data-theme="minimal"] .feature-tile,body[data-theme="minimal"] .theme-btn,body[data-theme="minimal"] input,body[data-theme="minimal"] select,body[data-theme="minimal"] textarea{border-color:rgba(17,24,39,.1)}
+    body[data-theme="sakura"]{--bg1:#fff5f8;--bg2:#f9dce8;--bg3:#e9eefc;--text:#4b3d49;--muted:#866f7d;--line:#ead6df;--card:rgba(255,255,255,.86);--accent:#e889a8;--accent-strong:#c86d90;--accent2:#9bb7e8;--head1:#f0a9bd;--head2:#b8c7ee;--head-today1:#e889a8;--head-today2:#9bb7e8;--public_required:linear-gradient(135deg,#f0a9bd,#dc789d);--major_required:linear-gradient(135deg,#9fc8ad,#73aa87);--major_elective:linear-gradient(135deg,#f4c982,#e6a95f);--public_elective:linear-gradient(135deg,#a9c3f4,#839fe0);--lab:linear-gradient(135deg,#efa0c4,#d878aa);--custom:linear-gradient(135deg,#cdb5f0,#a98bda)}
+    body[data-theme="matcha"]{--bg1:#f4f8ed;--bg2:#ddebd0;--bg3:#f3ead9;--text:#3f4b3c;--muted:#73806b;--line:#d7e3cd;--card:rgba(255,255,255,.84);--accent:#86a96f;--accent-strong:#66884f;--accent2:#c2a272;--head1:#9dbb84;--head2:#c5b07a;--head-today1:#8fb37a;--head-today2:#d0b882;--public_required:linear-gradient(135deg,#a7c48f,#86a96f);--major_required:linear-gradient(135deg,#8fbf93,#6a9d70);--major_elective:linear-gradient(135deg,#d7bd7b,#b99652);--public_elective:linear-gradient(135deg,#a6c8b7,#78a493);--lab:linear-gradient(135deg,#d2a58f,#bd816b);--custom:linear-gradient(135deg,#b8aa84,#93855e)}
+    body[data-theme="lavender"]{--bg1:#f7f2ff;--bg2:#e7ddfb;--bg3:#dfeaf8;--text:#463f59;--muted:#766c8e;--line:#ddd3ee;--card:rgba(255,255,255,.85);--accent:#a18ad7;--accent-strong:#7f68bd;--accent2:#91b6d8;--head1:#b19be5;--head2:#91b6d8;--head-today1:#c19adf;--head-today2:#9e8fd8;--public_required:linear-gradient(135deg,#b19be5,#8a73d1);--major_required:linear-gradient(135deg,#93c7b0,#6fae91);--major_elective:linear-gradient(135deg,#f1bf7d,#dc9861);--public_elective:linear-gradient(135deg,#91b6d8,#6d9ec8);--lab:linear-gradient(135deg,#d69fc9,#b97db2);--custom:linear-gradient(135deg,#c9b7ed,#a58ad8)}
+    body[data-theme="sunset"]{--bg1:#fff2e5;--bg2:#ffd7bf;--bg3:#eadcf9;--text:#55423d;--muted:#836d66;--line:#efd7cb;--card:rgba(255,255,255,.86);--accent:#f08a6c;--accent-strong:#d86950;--accent2:#b889d8;--head1:#f39b70;--head2:#b889d8;--head-today1:#ffb36f;--head-today2:#d77777;--public_required:linear-gradient(135deg,#f39b70,#e2765b);--major_required:linear-gradient(135deg,#8bc6a0,#5fae80);--major_elective:linear-gradient(135deg,#ffc371,#f08a4b);--public_elective:linear-gradient(135deg,#b889d8,#8d78c9);--lab:linear-gradient(135deg,#ef8aa2,#d96d8e);--custom:linear-gradient(135deg,#c7a0e8,#a780d2)}
+    body[data-theme="aurora"]{--bg1:#eefcff;--bg2:#d7f4ed;--bg3:#e7e1ff;--text:#344a54;--muted:#668089;--line:#cfe3e6;--card:rgba(255,255,255,.84);--accent:#65c8c7;--accent-strong:#3ba7a8;--accent2:#8c91e8;--head1:#65c8c7;--head2:#8c91e8;--head-today1:#7ad8ad;--head-today2:#6fa4ef;--public_required:linear-gradient(135deg,#67d0d0,#3ca4b5);--major_required:linear-gradient(135deg,#7ad8ad,#4fb68c);--major_elective:linear-gradient(135deg,#ffd36a,#f0aa45);--public_elective:linear-gradient(135deg,#89b8ff,#6e8fe8);--lab:linear-gradient(135deg,#cf91e8,#a978da);--custom:linear-gradient(135deg,#7dcfb6,#4ea699)}
+    body[data-theme="latte"]{--bg1:#fbf4ea;--bg2:#ead8c2;--bg3:#dfe5dc;--text:#4f4439;--muted:#7e7062;--line:#e1cfba;--card:rgba(255,255,255,.84);--accent:#b9875e;--accent-strong:#936846;--accent2:#8ba487;--head1:#c79a72;--head2:#9caf95;--head-today1:#d2ab82;--head-today2:#b9875e;--public_required:linear-gradient(135deg,#c79a72,#a87450);--major_required:linear-gradient(135deg,#9caf95,#758f70);--major_elective:linear-gradient(135deg,#e4c079,#c99d52);--public_elective:linear-gradient(135deg,#91a9b0,#6f8d96);--lab:linear-gradient(135deg,#c88b83,#a96b65);--custom:linear-gradient(135deg,#bba98c,#927f62)}
+    #weekTitle{white-space:nowrap}.bar>div:nth-child(2){flex-wrap:nowrap}.bar .badge{white-space:nowrap}#weekBadge{display:none;margin-left:6px;padding:7px 11px;font-size:12px}#weekBadge.week-current{display:inline-flex!important}
+
+
+    /* v20: 手机 App 化收敛：账号固定右上角、空白格可点但不显示“点击添加”、功能详情在当前区块展开、配色全局同步 */
+    .primary,.chip.active,.mode .btn.active,.account-avatar,.avatar-dot,.primary-tile,.tag{background:linear-gradient(135deg,var(--accent),var(--accent-strong))!important}
+    .head{background:linear-gradient(135deg,var(--head1),var(--head2))}.head.today{background:linear-gradient(135deg,var(--head-today1),var(--head-today2))}
+    .account-avatar{position:fixed;right:10px;top:10px;width:30px;height:30px;font-size:15px;z-index:80}
+    .empty-slot{pointer-events:auto;cursor:pointer;background:rgba(255,255,255,.16);transition:.18s ease}
+    .slot.empty-clickable:hover .empty-slot{background:rgba(255,255,255,.34);box-shadow:inset 0 0 0 1px rgba(143,132,168,.22)}
+    .slot.empty-clickable:active .empty-slot{transform:scale(.985)}
+    .quick-panel #drawer{margin:0;padding:0;background:transparent;border:0;box-shadow:none}
+    .manage-course-only .slot-info-panel{display:none!important}.manage-slot-only .course-manage-panel{display:none!important}
+    .slot-info-panel .account-profile-tools{display:none!important}
+    #drawer .drawer-grid{grid-template-columns:1fr!important}
+    #drawer .panel>p,.legacy-note{display:none!important}
+    #featureDetailPanel{scroll-margin-top:52px}
+    .modal-card .detail:last-child{margin-bottom:0}
+
+
+    /* v19: 取消空白格添加与周数字条，减少视觉干扰 */
+    .week-strip{display:none!important}
+    .bar{grid-template-columns:64px 1fr auto 64px}
+    #prevWeek{grid-column:1}
+    .bar>div:nth-child(2){grid-column:2}
+    .bar .mode{grid-column:3}
+    #nextWeek{grid-column:4}
+
+    @media (max-width:1000px){
+  .wrap{
+    padding:10px;
+    max-width:none;
+    overflow-x:hidden;
+  }
+
+  .hero{
+    grid-template-columns:1fr;
+    padding:18px;
+  }
+
+  .right{
+    text-align:left;
+  }
+
+  .title{
+    font-size:30px;
+  }
+
+  .next-title{
+    font-size:22px;
+  }
+
+  .bar{
+    grid-template-columns:44px 1fr 44px;
+    grid-template-areas:"prev title next" "mode mode mode" "actions actions actions";
+    gap:8px;
+    padding:12px;
+  }
+
+  #prevWeek{grid-area:prev}
+  #nextWeek{grid-area:next}
+  .bar>div:nth-child(2){grid-area:title;text-align:center}
+  .week-strip{grid-area:strip}
+  .mode{grid-area:mode;justify-content:center}
+  .actions{grid-area:actions;justify-content:center}
+
+  .section{
+    padding:10px;
+  }
+
+  .toolbar{
+    font-size:12px;
+  }
+
+  .legend{
+    display:none;
+  }
+
+  .table{
+    display:grid;
+    grid-template-columns:48px repeat(7, 1fr);
+    border-radius:18px;
+  }
+
+  .mobile{
+    display:none;
+  }
+
+  .head{
+    min-height:58px;
+    font-size:14px;
+    padding:4px 2px;
+  }
+
+  .timecell{
+    min-height:118px;
+    padding:8px 4px;
+  }
+
+  .timecell .name{
+    font-size:14px!important;
+    line-height:1.2;
+  }
+
+  .timecell .muted{
+    font-size:11px;
+    line-height:1.3;
+  }
+
+  .slot{
+    min-height:118px;
+    padding:4px;
+  }
+
+  .course{
+    border-radius:10px;
+    padding:6px 4px;
+    min-height:108px;
+    justify-content:flex-start;
+  }
+
+  .course .name{
+    font-size:13px;
+    line-height:1.25;
+    margin-bottom:4px;
+    word-break:break-all;
+  }
+
+  .course .meta2{
+    font-size:11px;
+    line-height:1.35;
+    word-break:break-all;
+  }
+
+  .mark{
+    display:none;
+  }
+
+  .drawer-grid{
+    grid-template-columns:1fr;
+  }
+
+  .form-grid{
+    grid-template-columns:1fr;
+  }
+  .auth{padding:10px}.auth-card{padding:18px;border-radius:24px}.auth-head h3{font-size:24px}.auth .panel{padding:0;background:transparent;border:0}.feature-grid{grid-template-columns:1fr}.feature-card{padding:14px}.theme-grid{grid-template-columns:1fr 1fr}.main-actions-minor{display:none}
+  #heroSection{display:none!important}
+  .bar>div:nth-child(2){gap:6px;font-size:16px}
+  .bar .badge{font-size:12px;padding:7px 10px}
+  .bar .mode{width:100%;display:flex;justify-content:center}
+  .bar .mode .btn{min-width:88px}
+  .feature-grid-v16,.feature-grid-v17{grid-template-columns:1fr}
+  .icon-actions{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .feature-tile{min-height:70px;border-radius:18px}
+  .account-avatar{right:8px;top:8px;width:28px;height:28px;font-size:14px}
+
+}
+
+
+    /* v24: 账号入口移到底部工具栏，顶部只负责周切换，避免手机端挤在一起 */
+    #accountAvatarBtn.account-avatar{display:none!important}
+    .feature-actions.account-actions{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .mobile-bottom-toolbar{display:none}
+    .mobile-bottom-tool{border:0;border-radius:18px;background:rgba(255,255,255,.72);color:var(--text);font:inherit;font-weight:900;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:54px;box-shadow:0 8px 18px rgba(80,90,108,.08);cursor:pointer}
+    .mobile-bottom-tool span{font-size:19px;line-height:1}.mobile-bottom-tool b{font-size:11px;line-height:1}.mobile-bottom-tool.primary{background:linear-gradient(135deg,var(--accent),var(--accent-strong));color:#fff}
+    @media (max-width:1000px){
+      .wrap{padding-bottom:calc(96px + env(safe-area-inset-bottom))!important}
+      .mobile-bottom-toolbar:not(.hidden){position:fixed;left:12px;right:12px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:88;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:8px;border-radius:26px;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.72);box-shadow:0 18px 42px rgba(65,72,86,.18);backdrop-filter:blur(18px)}
+      body[data-theme="night"] .mobile-bottom-toolbar:not(.hidden){background:rgba(32,38,51,.86);border-color:rgba(255,255,255,.12)}
+      body[data-theme="night"] .mobile-bottom-tool{background:rgba(21,25,34,.84)}
+      .feature-actions.account-actions{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px}
+      .feature-actions.account-actions .feature-tile{min-height:64px;padding:9px 4px;border-radius:17px}
+      .feature-actions.account-actions .feature-tile span{font-size:20px}.feature-actions.account-actions .feature-tile b{font-size:12px}
+    }
+
+    /* v25: 手动添加课程弹窗不再被底部工具栏遮挡；工具栏支持同学自行隐藏/显示 */
+
+    /* v27: 修复空白格手动添加课程保存按钮在手机端被遮挡/点击无响应 */
+    .modal-actions-sticky{position:sticky;bottom:0;z-index:3;margin-top:14px;padding:12px 0 2px;background:linear-gradient(180deg,rgba(255,255,255,0),rgba(255,255,255,.96) 22%,rgba(255,255,255,.98));backdrop-filter:blur(10px)}
+    #modalSaveCourseBtn[disabled]{opacity:.68;cursor:wait;transform:none}
+    body.modal-open .mobile-bottom-toolbar{pointer-events:none;opacity:0;transform:translateY(110%)}
+
+    /* v36: 课表数据备份、恢复、重置 */
+    .feature-actions.account-actions{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+    .toolbar-toggle-tile.is-hidden span{transform:rotate(180deg)}
+    .toolbar-toggle-tile.is-hidden b::after{content:''}
+    @media (max-width:1000px){
+      body.toolbar-hidden .wrap{padding-bottom:18px!important}
+      body.modal-open .mobile-bottom-toolbar{display:none!important}
+      body.modal-open .wrap{padding-bottom:18px!important}
+      .backdrop{z-index:120}
+      .modal{z-index:130;place-items:start center;align-items:flex-start;justify-items:center;overflow:auto;padding:10px 14px calc(22px + env(safe-area-inset-bottom))}
+      .modal-card{margin-top:6px;width:min(920px,96vw);max-height:calc(100dvh - 34px - env(safe-area-inset-bottom));padding:20px 18px 28px;border-radius:26px}
+      .modal-title{font-size:22px}
+    }
+
+
+    /* v29: 安卓端课表列尺寸/截图模式，可在课表工具里切换 */
+    .table-size-tile.is-screenshot span{transform:scaleX(1.18)}
+    .table-size-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+    .table-size-option{border:1px solid rgba(160,170,182,.35);border-radius:22px;background:rgba(255,255,255,.78);padding:14px;cursor:pointer;text-align:left;color:var(--text);font:inherit;box-shadow:0 8px 18px rgba(80,90,108,.06)}
+    .table-size-option b{display:block;font-size:17px;margin-bottom:5px}.table-size-option small{display:block;color:var(--muted);font-weight:800;line-height:1.55}.table-size-option.active{outline:3px solid rgba(143,132,168,.35);background:rgba(255,255,255,.96)}
+    @media (max-width:1000px){
+      body[data-table-size="screenshot"] .wrap{padding-left:4px!important;padding-right:4px!important}
+      body[data-table-size="screenshot"] .bar{margin-bottom:8px!important;padding:10px 10px 12px!important;border-radius:24px!important;gap:8px!important}
+      body[data-table-size="screenshot"] #prevWeek,body[data-table-size="screenshot"] #nextWeek{width:46px!important;height:46px!important}
+      body[data-table-size="screenshot"] .bar .badge{font-size:11px;padding:6px 8px}
+      body[data-table-size="screenshot"] .bar .mode .btn{min-width:74px;padding:8px 12px}
+      body[data-table-size="screenshot"] .section{padding:6px!important;border-radius:20px!important}
+      body[data-table-size="screenshot"] .toolbar,body[data-table-size="screenshot"] #mainSection>.sub{display:none!important}
+      body[data-table-size="screenshot"] .table{grid-template-columns:40px repeat(7,minmax(0,1fr));border-radius:16px}
+      body[data-table-size="screenshot"] .head{min-height:40px;font-size:12px;padding:3px 1px;line-height:1.15}
+      body[data-table-size="screenshot"] .timecell{min-height:72px;padding:4px 2px}
+      body[data-table-size="screenshot"] .timecell .name{font-size:12px!important;line-height:1.12}
+      body[data-table-size="screenshot"] .timecell .muted{font-size:9px;line-height:1.1;font-weight:800}
+      body[data-table-size="screenshot"] .slot{min-height:72px;padding:2px}
+      body[data-table-size="screenshot"] .course{min-height:66px;border-radius:8px;padding:4px 2px;justify-content:center}
+      body[data-table-size="screenshot"] .course .name{font-size:10.5px;line-height:1.12;margin:0;word-break:break-word;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4}
+      body[data-table-size="screenshot"] .course .meta2{display:none}
+      body[data-table-size="screenshot"] .mark{display:none!important}
+      .table-size-options{grid-template-columns:1fr}
+    }
+
+    /* v30: 三种课表宽度预设 + 自由列宽；教室优先模式突出地点并省略课程名 */
+    .table-size-tile.is-classroom span{transform:scaleX(1.24)}
+    .table-width-control{margin-top:12px;border:1px solid rgba(160,170,182,.28);border-radius:22px;background:rgba(255,255,255,.66);padding:14px;box-shadow:0 8px 18px rgba(80,90,108,.05)}
+    .table-width-head{display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:900;color:var(--text);margin-bottom:8px}
+    .table-width-head span{font-size:13px;color:var(--muted);font-weight:900;white-space:nowrap}
+    #tableWidthRange{padding:0;accent-color:var(--accent);cursor:pointer}
+    .table-width-presets{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:900;margin-top:4px}
+    @media (max-width:1000px){
+      .section{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+      .table{grid-template-columns:48px repeat(7,minmax(var(--xiaode-day-width,48px),1fr));min-width:calc(48px + 7 * var(--xiaode-day-width,48px))}
+      body[data-table-size="classic"] .table{grid-template-columns:48px repeat(7,minmax(var(--xiaode-day-width,48px),1fr));min-width:calc(48px + 7 * var(--xiaode-day-width,48px))}
+      body[data-table-size="screenshot"] .table{grid-template-columns:36px repeat(7,minmax(var(--xiaode-day-width,42px),1fr));min-width:calc(36px + 7 * var(--xiaode-day-width,42px))}
+      body[data-table-size="classroom"] .wrap{padding-left:5px!important;padding-right:5px!important}
+      body[data-table-size="classroom"] .bar{margin-bottom:8px!important;padding:10px 10px 12px!important;border-radius:24px!important;gap:8px!important}
+      body[data-table-size="classroom"] #prevWeek,body[data-table-size="classroom"] #nextWeek{width:46px!important;height:46px!important}
+      body[data-table-size="classroom"] .bar .badge{font-size:11px;padding:6px 8px}
+      body[data-table-size="classroom"] .bar .mode .btn{min-width:74px;padding:8px 12px}
+      body[data-table-size="classroom"] .section{padding:6px!important;border-radius:20px!important}
+      body[data-table-size="classroom"] .toolbar,body[data-table-size="classroom"] #mainSection>.sub{display:none!important}
+      body[data-table-size="classroom"] .table{grid-template-columns:36px repeat(7,minmax(var(--xiaode-day-width,52px),1fr));min-width:calc(36px + 7 * var(--xiaode-day-width,52px));border-radius:16px}
+      body[data-table-size="classroom"] .head{min-height:38px;font-size:12px;padding:3px 1px;line-height:1.15}
+      body[data-table-size="classroom"] .timecell{min-height:78px;padding:4px 2px}
+      body[data-table-size="classroom"] .timecell .name{font-size:12px!important;line-height:1.12}
+      body[data-table-size="classroom"] .timecell .muted{font-size:9px;line-height:1.1;font-weight:800}
+      body[data-table-size="classroom"] .slot{min-height:78px;padding:2px}
+      body[data-table-size="classroom"] .course{min-height:72px;border-radius:9px;padding:4px 3px;justify-content:center}
+      body[data-table-size="classroom"] .course .name{font-size:10px;line-height:1.1;margin:0 0 2px;word-break:break-word;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;opacity:.96}
+      body[data-table-size="classroom"] .course .meta2{display:-webkit-box!important;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;font-size:11px;line-height:1.12;font-weight:950;word-break:break-word;text-shadow:0 1px 2px rgba(0,0,0,.12)}
+      body[data-table-size="classroom"] .mark{display:none!important}
+      .table-size-options{grid-template-columns:1fr}
+    }
+
+
+    /* v21: 顶部周切换重新排版，避免“简洁/完整”和账号头像错位；节次时间改为可编辑 */
+    #slotsTable input{width:100%;padding:8px 9px;border-radius:12px;font-size:13px;background:rgba(255,255,255,.92)}
+    #slotsTable .slot-num{font-weight:900;color:var(--muted);white-space:nowrap}
+    #slotsTable .slot-time-pair{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:132px}
+    .slot-editor-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center}
+    .slot-editor-tip{margin-top:10px;font-size:13px;color:var(--muted);font-weight:800;line-height:1.6}
+    @media (max-width:1000px){
+      .bar{
+        position:relative!important;
+        grid-template-columns:52px minmax(0,1fr) 52px!important;
+        grid-template-areas:"prev title next" "mode mode mode"!important;
+        gap:12px!important;
+        padding:16px 14px 18px!important;
+        overflow:visible!important;
+      }
+      #prevWeek{grid-area:prev!important;grid-column:auto!important;width:52px;height:52px;justify-self:start!important}
+      #nextWeek{grid-area:next!important;grid-column:auto!important;width:52px;height:52px;justify-self:end!important;margin:0!important}
+      .bar>div:nth-child(2){grid-area:title!important;grid-column:auto!important;min-width:0;text-align:center!important;display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
+      .bar .mode{grid-area:mode!important;grid-column:1 / -1!important;justify-self:center!important;width:auto!important;max-width:100%;display:inline-flex!important;margin:0 auto!important}
+      .bar .mode .btn{min-width:86px;text-align:center}
+      #slotsTable{font-size:12px}
+      #slotsTable th,#slotsTable td{padding:7px 4px}
+    }
+
+
+
+    /* v31: 顶部周切换收起、表头显示周数与日期、15 宫格工具、二级界面化 */
+    #mainBar{display:none!important}
+    .week-nav-row{display:flex;gap:10px;margin:12px 0 0;align-items:center;justify-content:center}
+    .week-nav-row .btn{flex:1;max-width:220px;border-radius:16px;padding:12px 10px;background:rgba(255,255,255,.76);box-shadow:0 8px 18px rgba(80,90,108,.06)}
+    .head.week-head{font-size:14px;line-height:1.2;font-weight:950;color:var(--text)}
+    .head .day-main{font-size:14px;font-weight:950;line-height:1.15;color:var(--text)}
+    .head .day-sub{margin-top:3px;font-size:11px;font-weight:900;line-height:1.1;color:var(--muted)}
+    .head.today .day-main,.head.today .day-sub{color:#22a891}
+    .feature-hub.collapsed{display:none!important}
+    .feature-title{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .feature-title small{font-size:13px;color:var(--muted);font-weight:800}
+    .feature-grid-v31{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+    .feature-grid-v31 .feature-tile{min-height:86px;border-radius:20px;background:rgba(255,255,255,.74);box-shadow:0 10px 22px rgba(80,90,108,.06)}
+    .feature-grid-v31 .feature-tile span{font-size:23px}.feature-grid-v31 .feature-tile b{font-size:13px;line-height:1.25}
+    .secondary-note{font-size:13px;color:var(--muted);font-weight:800;line-height:1.6;margin-top:8px}
+    .modal-card .drawer{margin:0;padding:0;background:transparent;border:0;box-shadow:none}
+    .modal-card .drawer-grid{grid-template-columns:1fr;gap:14px}
+    .modal-card .panel{background:rgba(255,255,255,.42);border:1px solid rgba(160,170,182,.18)}
+    .modal-card .drawer.manage-course-only .slot-info-panel{display:none!important}
+    .modal-card .drawer.manage-slot-only .course-manage-panel{display:none!important}
+    .style-switch-grid{display:grid;gap:12px;margin-top:10px}
+    .style-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;border-radius:18px;background:rgba(255,255,255,.7);border:1px solid rgba(160,170,182,.18);font-weight:900}
+    .style-row small{display:block;color:var(--muted);font-weight:800;margin-top:3px}.style-row .btn{min-width:86px}
+    .theme-grid-modal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.theme-grid-modal .theme-btn{text-align:center;min-height:76px}
+    @media (max-width:1000px){
+      .wrap{padding-top:10px!important}
+      #mainSection{margin-top:0!important}
+      .toolbar{display:none!important}
+      .section{margin-top:0!important}
+      .week-nav-row{position:relative;z-index:2;margin-top:10px;gap:8px}.week-nav-row .btn{max-width:none;padding:12px 6px;font-size:16px}
+      .head.week-head{font-size:13px;padding:5px 2px}.head .day-main{font-size:13px}.head .day-sub{font-size:10.5px}
+      .feature-hub{margin-top:12px;padding:14px;border-radius:24px}.feature-title{font-size:20px;margin-bottom:12px}
+      .feature-grid-v31{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+      .feature-grid-v31 .feature-tile{min-height:72px;padding:9px 3px;border-radius:16px}
+      .feature-grid-v31 .feature-tile span{font-size:20px}.feature-grid-v31 .feature-tile b{font-size:11.5px}
+      .theme-grid-modal{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
+
+    /* v32: 设置、简称、日历分享 */
+    body.hide-location-module .module-location{display:none!important}
+    body.hide-teacher-module .module-teacher{display:none!important}
+    body.hide-class-group-module .module-class-group{display:none!important}
+    .quick-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+    @media (max-width:1000px){.quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+    /* v34: 课表长度调节 + Android 原生日历提醒页面 */
+    body .timecell,body .slot{min-height:var(--xiaode-row-height,118px)}
+    body .course{min-height:calc(var(--xiaode-row-height,118px) - 10px)}
+    body[data-table-size="screenshot"] .timecell,body[data-table-size="screenshot"] .slot{min-height:var(--xiaode-row-height,72px)}
+    body[data-table-size="screenshot"] .course{min-height:calc(var(--xiaode-row-height,72px) - 6px)}
+    body[data-table-size="classroom"] .timecell,body[data-table-size="classroom"] .slot{min-height:var(--xiaode-row-height,78px)}
+    body[data-table-size="classroom"] .course{min-height:calc(var(--xiaode-row-height,78px) - 6px)}
+    .table-length-control{margin-top:12px;border:1px solid rgba(160,170,182,.28);border-radius:22px;background:rgba(255,255,255,.66);padding:14px;box-shadow:0 8px 18px rgba(80,90,108,.05)}
+    .table-length-head{display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:900;color:var(--text);margin-bottom:8px}
+    .table-length-head span{font-size:13px;color:var(--muted);font-weight:900;white-space:nowrap}
+    #tableHeightRange{padding:0;accent-color:var(--accent);cursor:pointer}
+    .reminder-page{display:grid;gap:12px}
+    .reminder-card{border-radius:24px;background:rgba(255,255,255,.76);border:1px solid rgba(160,170,182,.18);padding:14px;box-shadow:0 8px 18px rgba(80,90,108,.05)}
+    .reminder-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;font-weight:900;color:var(--text)}
+    .reminder-row + .reminder-row{border-top:1px solid rgba(160,170,182,.14)}
+    .reminder-row .left small{display:block;color:var(--muted);font-weight:800;margin-top:4px;line-height:1.5}
+    .reminder-row .chev{font-size:24px;color:var(--muted);font-weight:800}
+    .reminder-pill{min-width:92px;text-align:center;border:0;border-radius:14px;background:rgba(246,247,249,.96);padding:10px 8px;color:var(--accent-strong);font:inherit;font-weight:900;box-shadow:inset 0 0 0 1px rgba(160,170,182,.08)}
+    .reminder-switch{width:54px;height:32px;border:0;border-radius:999px;padding:3px;background:rgba(180,188,198,.55);cursor:pointer;transition:.18s ease;flex:0 0 auto}
+    .reminder-switch::after{content:'';display:block;width:26px;height:26px;border-radius:50%;background:#fff;box-shadow:0 3px 10px rgba(50,60,70,.18);transition:.18s ease}
+    .reminder-switch.on{background:linear-gradient(135deg,#22b8a5,var(--accent-strong))}
+    .reminder-switch.on::after{transform:translateX(22px)}
+    .reminder-select{width:min(210px,48vw);border:0;background:rgba(246,247,249,.96);font-weight:900;color:var(--muted);box-shadow:inset 0 0 0 1px rgba(160,170,182,.08)}
+    .reminder-confirm{width:100%;border-radius:20px;padding:15px 18px;font-size:17px}
+    .reminder-preview{display:grid;gap:10px}
+    .reminder-preview-item{position:relative;border-radius:20px;background:rgba(255,255,255,.78);padding:13px 15px 13px 24px;border:1px solid rgba(160,170,182,.12);font-weight:900;line-height:1.65}
+    .reminder-preview-item::before{content:'';position:absolute;left:10px;top:20px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+    .reminder-preview-item.end::before{background:#20b89a}
+    .reminder-permission-hero{text-align:left;display:grid;gap:12px}
+    .reminder-permission-hero .big{font-size:18px;font-weight:950;line-height:1.6}
+    @media (max-width:1000px){.reminder-card{border-radius:22px;padding:13px 14px}.reminder-row{font-size:17px}.reminder-pill{min-width:86px}.reminder-select{width:min(180px,46vw)}}
+
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <button class="account-avatar hidden" id="accountAvatarBtn" title="账号">👤</button>
+    <section class="card hero" id="heroSection">
+      <div>
+        <div class="title" id="appTitle">小德课表</div>
+        <div class="sub" id="dateLine">--</div>
+        <div class="sub" id="noticeLine">--</div>
+      </div>
+      <div class="right">
+        <div class="pill" id="statusPill">请先登录</div>
+        <div class="next-title" id="nextName">每个同学都有自己的课表</div>
+        <div class="next-meta" id="nextMeta">登录后只看自己的数据，互不影响</div>
+      </div>
+    </section>
+
+    <section class="card auth" id="authSection">
+      <div class="auth-card">
+        <div class="panel" id="loginPanel">
+          <div class="auth-head"><h3>登录</h3><button class="auth-switch" id="showRegisterAuth" type="button">没有账号？去注册</button></div>
+          <div class="row"><label>用户名</label><input id="loginUsername" placeholder="例如：zhangsan" /></div>
+          <div class="row"><label>密码</label><input id="loginPassword" type="password" placeholder="至少 4 位" /></div>
+          <div class="inline"><button class="btn primary" id="loginBtn">登录</button><button class="btn ghost" id="fillDemoBtn">填入演示账号</button><button class="btn ghost hidden" id="helpBtnAuth">使用说明</button></div>
+          <div class="auth-note hidden">演示账号：demo / 123456</div>
+        </div>
+        <div class="panel hidden" id="registerPanel">
+          <div class="auth-head"><h3>注册</h3><button class="auth-switch" id="showLoginAuth" type="button">已有账号？去登录</button></div>
+          <div class="row"><label>姓名</label><input id="registerName" placeholder="例如：张三" /></div>
+          <div class="row"><label>用户名</label><input id="registerUsername" placeholder="只能自己记住就行" /></div>
+          <div class="row"><label>密码</label><input id="registerPassword" type="password" placeholder="至少 4 位" /></div>
+          <div class="inline"><button class="btn primary" id="registerBtn">注册并登录</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card bar hidden" id="mainBar">
+      <button class="btn primary nav" id="prevWeek">◀</button>
+      <div>
+        <strong id="weekTitle">第 1 周</strong>
+        <span class="badge current" id="weekBadge">本周</span>
+        <span class="badge" id="parityBadge">单周</span>
+      </div>
+      <div class="week-strip" id="weekStrip"></div>
+      <div class="mode"><button class="btn active" data-mode="compact">简洁</button><button class="btn" data-mode="full">完整</button></div>
+    <div class="actions main-actions-minor hidden">
+  <button class="btn ghost" id="todayCoursesBtn">今日课程</button>
+  <button class="btn ghost" id="helpBtnMain">使用说明</button>
+  <button class="btn ghost" id="thisWeekBtn">回到本周</button>
+  <button class="btn ghost" id="feedbackBtn">反馈建议</button>
+  <button class="btn ghost hidden" id="viewFeedbackBtn">查看反馈</button>
+  <button class="btn ghost hidden" id="viewUsersBtn">查看用户</button>
+  <button class="btn ghost" id="toggleManageBtn">管理</button>
+  <button class="btn ghost" id="refreshBtn">刷新</button>
+  <button class="btn ghost" id="logoutBtn">退出登录</button>
+</div>
+      <button class="btn primary nav" id="nextWeek">▶</button>
+    </section>
+
+    <section class="card section hidden" id="mainSection">
+      <div class="toolbar">
+        <div id="termLine">--</div>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--public_required)"></i>公共必修</span>
+          <span><i class="dot" style="background:var(--major_required)"></i>专业必修</span>
+          <span><i class="dot" style="background:var(--major_elective)"></i>专业选修</span>
+          <span><i class="dot" style="background:var(--public_elective)"></i>公共选修</span>
+          <span><i class="dot" style="background:var(--lab)"></i>实验</span>
+        </div>
+      </div>
+      <div class="table" id="table"></div>
+      <div class="week-nav-row" id="weekNavRow"><button class="btn ghost" id="prevWeekInline" type="button">上一周</button><button class="btn ghost" id="thisWeekInline" type="button">本周</button><button class="btn ghost" id="nextWeekInline" type="button">下一周</button></div>
+      <div class="mobile" id="mobileList"></div>
+      <div class="sub">这里显示的是 <span id="ownerName">我的</span> 课表。别人的导入、修改，不会影响这里。</div>
+    </section>
+
+    <section class="card feature-hub hidden collapsed" id="featureHub">
+      <div class="feature-title">课表工具 <small>点一个功能进入二级界面</small></div>
+      <div class="feature-grid-v31">
+        <button class="feature-tile primary-tile" data-feature-action="editCourses"><span>✎</span><b>开启编辑</b></button>
+        <button class="feature-tile" data-feature-action="today"><span>⚡</span><b>本周课程</b></button>
+        <button class="feature-tile" data-feature-action="scheduleSettings"><span>⚙</span><b>课表设置</b></button>
+        <button class="feature-tile" data-feature-action="slotInfo"><span>◷</span><b>课表时间</b></button>
+        <button class="feature-tile table-size-tile" data-feature-action="tableStyle"><span>Tᵀ</span><b>课表样式</b></button>
+        <button class="feature-tile" data-feature-action="themePanel"><span>◉</span><b>一键配色</b></button>
+        <button class="feature-tile primary-tile" data-feature-action="jwxt"><span>⇩</span><b>导入课表</b></button>
+        <button class="feature-tile" data-feature-action="share"><span>⌯</span><b>分享课表</b></button>
+        <button class="feature-tile table-size-tile" data-feature-action="tableSize"><span>▦</span><b>课表尺寸</b></button>
+        <button class="feature-tile" data-feature-action="reminder"><span>♢</span><b>课程提醒</b></button>
+        <button class="feature-tile toolbar-toggle-tile" data-feature-action="toggleToolbar"><span>⌄</span><b>隐藏工具栏</b></button>
+        <button class="feature-tile" data-feature-action="backup"><span>☁</span><b>备份恢复</b></button>
+        <button class="feature-tile" data-feature-action="account"><span>👤</span><b>账号管理</b></button>
+        <button class="feature-tile" data-feature-action="help"><span>?</span><b>帮助文档</b></button>
+        <button class="feature-tile" data-feature-action="logout"><span>↪</span><b>退出登录</b></button>
+      </div>
+      <div class="quick-panel hidden" id="featureDetailPanel"></div>
+    </section>
+
+    <nav class="mobile-bottom-toolbar hidden" id="mobileBottomToolbar" aria-label="底部工具栏">
+      <button class="mobile-bottom-tool" type="button" data-bottom-action="today"><span>⚡</span><b>今日</b></button>
+      <button class="mobile-bottom-tool" type="button" data-bottom-action="thisWeek"><span>⏱</span><b>本周</b></button>
+      <button class="mobile-bottom-tool primary" type="button" data-bottom-action="jwxt"><span>⇩</span><b>导入</b></button>
+      <button class="mobile-bottom-tool" type="button" data-bottom-action="manage"><span>▦</span><b>工具</b></button>
+      <button class="mobile-bottom-tool" type="button" data-bottom-action="account"><span>👤</span><b>账号</b></button>
+    </nav>
+
+    <section class="card drawer hidden quick-manage-anchor" id="drawer">
+      <div class="drawer-grid">
+        <div class="panel course-manage-panel">
+          <h3>编辑课程</h3>
+          <p>你在这里新增、编辑、删除或导入的课程，只会写入你自己的账号，不会改到别人。</p>
+          <div class="form-grid">
+            <div class="row"><label>课程名</label><input id="courseName" /></div>
+            <div class="row"><label>课表简称</label><input id="courseShortName" placeholder="可选，优先显示在课表格子里" /></div>
+            <div class="row module-teacher"><label>老师</label><input id="courseTeacher" /></div>
+            <div class="row module-location"><label>地点 / 教室</label><input id="courseLocation" /></div>
+            <div class="row module-class-group"><label>班级</label><input id="courseClassGroup" placeholder="可选，例如：化学2班" /></div>
+            <div class="row"><label>星期</label><select id="courseDay"></select></div>
+            <div class="row"><label>节次</label><select id="courseSlot"></select></div>
+            <div class="row"><label>周次文本</label><input id="courseWeekText" placeholder="1-17周 / 5周 / 1-17周(单)" /></div>
+            <div class="row"><label>单双周</label><select id="courseOddEven"><option value="all">全部</option><option value="odd">单周</option><option value="even">双周</option></select></div>
+            <div class="row"><label>分类</label><select id="courseCategory"><option value="public_required">公共必修</option><option value="major_required">专业必修</option><option value="major_elective">专业选修</option><option value="public_elective">公共选修</option><option value="lab">实验</option><option value="custom">自定义</option></select></div>
+          </div>
+          <div class="inline"><button class="btn primary" id="saveCourseBtn">保存课程</button><button class="btn ghost" id="resetCourseBtn">清空表单</button><button class="btn danger hidden" id="deleteCourseBtn">删除当前课程</button><button class="btn danger" id="clearAllCoursesBtn">一键清空我的课表</button></div>
+          <div class="legacy-import-hidden" aria-hidden="true">
+            <textarea id="importText" placeholder="day,slot,name,teacher,location,weekText,oddEven,category"></textarea>
+            <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.pdf" />
+            <button class="btn primary" id="replaceImportBtn">覆盖我的课表</button>
+            <button class="btn ghost" id="appendImportBtn">追加到我的课表</button>
+          </div>
+
+          <div id="jwxtImportSection" class="hidden">
+            <h3 style="margin-top:18px">教务系统导入</h3>
+            <div class="form-grid">
+              <div class="row"><label>服务器地址</label><input id="appServerUrl" readonly /></div>
+              <div class="row"><label>学年 xnm</label><input id="jwxtXnm" value="2025" placeholder="例如：2025" /></div>
+              <div class="row"><label>学期 xqm</label><input id="jwxtXqm" value="12" placeholder="第二学期通常是 12" /></div>
+            </div>
+            <div class="inline">
+              <button class="btn primary" id="createImportCodeBtn">开始教务导入</button>
+              <button class="btn ghost" id="copyServerUrlBtn">复制服务器地址</button>
+              <button class="btn ghost hidden" id="androidImportGuideBtn">导入说明</button>
+              <button class="btn ghost" id="jwxtAppendModeBtn">当前：覆盖导入</button>
+            </div>
+            <div class="detail hidden" id="androidImportCodeBox" style="margin-top:10px">
+              <div style="font-weight:900;margin-bottom:6px">本次导入码</div>
+              <div class="form-grid">
+                <div class="row"><label>导入码</label><input id="androidImportCode" readonly class="selectable-code" autocomplete="off" /></div>
+                <div id="androidImportCodeBig" class="detail selectable-code" style="font-size:28px;font-weight:900;letter-spacing:3px;text-align:center;user-select:text;-webkit-user-select:text"></div>
+                <div class="row"><label>有效期</label><input id="androidImportCodeMeta" readonly /></div>
+              </div>
+              <div class="inline"><button class="btn primary" id="copyImportCodeBtn">复制导入码</button></div>
+            </div>
+          </div>
+          <div id="jwxtRemoteNotice" class="detail hidden" style="margin-top:18px"></div>
+        </div>
+        <div class="panel slot-info-panel">
+          <div class="account-profile-tools hidden" aria-hidden="true">
+            <input id="profileName" />
+            <button id="saveProfileBtn"></button>
+            <input id="oldPassword" type="password" />
+            <input id="newPassword" type="password" />
+            <button id="changePasswordBtn"></button>
+          </div>
+          <h3>节次时间</h3>
+          <table class="mini-table" id="slotsTable"></table>
+          <div class="slot-editor-actions">
+            <button class="btn primary" id="saveSlotsBtn" type="button">保存时间</button>
+            <button class="btn ghost" id="resetSlotsBtn" type="button">恢复默认</button><button class="btn ghost" id="hideFifthSlotBtn" type="button">隐藏第5节</button>
+          </div>
+          <div class="slot-editor-tip">可直接调整每个节次的名称、开始时间和结束时间；保存后，课表左侧时间、当前/下一节判断、小组件数据都会同步。</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="backdrop hidden" id="backdrop"></div>
+  <div class="modal hidden" id="modal">
+    <div class="modal-card">
+      <div class="modal-top"><div class="modal-title" id="modalTitle">课程详情</div><button class="btn ghost" id="closeModal">关闭</button></div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const DAYS=["周一","周二","周三","周四","周五","周六","周日"];
+    const APP_NAME="小德课表";
+    const HEALING_QUOTES=[
+      "慢慢来，比较快。今天完成一点点，也是在向前走。",
+      "不用把每一天都过成满分，能照顾好自己就已经很棒。",
+      "你不需要一直紧绷。允许自己休息，也是一种认真生活。",
+      "把今天的一节课、一道题、一件小事做好，就已经足够值得肯定。",
+      "别急着否定自己，很多变化都是在安静处发生的。",
+      "愿你今天有课可上，有梦可想，也有时间好好呼吸。",
+      "路很长，但你不是原地踏步；每一次打开课表，都是重新掌控生活。",
+      "先照顾好当下，再慢慢靠近想成为的自己。",
+      "今天也许普通，但普通的一天也能积累出很远的未来。",
+      "别怕节奏慢，稳定本身就是一种力量。"
+    ];
+    function pickHealingQuote(){return HEALING_QUOTES[Math.floor(Math.random()*HEALING_QUOTES.length)]}
+    const STYLE={public_required:'var(--public_required)',major_required:'var(--major_required)',major_elective:'var(--major_elective)',public_elective:'var(--public_elective)',lab:'var(--lab)',custom:'var(--custom)'};
+    const DEFAULT_COURSE_SETTINGS={totalWeeks:'',weekStartDay:'1',termStart:'',showLocation:true,showTeacher:true,showClassGroup:false,customTime:false};
+    function loadCourseSettings(){try{return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(localStorage.getItem('xiaodeCourseSettings')||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
+    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:localStorage.getItem('xiaodeTheme')||'morandi',bottomToolbarHidden:localStorage.getItem('xiaodeBottomToolbarHidden')==='1',tableSize:localStorage.getItem('xiaodeTableSize')||'classic',tableDayWidth:Number(localStorage.getItem('xiaodeTableDayWidth')||0),tableRowHeight:Number(localStorage.getItem('xiaodeTableRowHeight')||0),hideFifthSlot:localStorage.getItem('xiaodeHideFifthSlot')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false};
+    const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+    function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
+    function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;localStorage.setItem('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
+    function showLoginPanel(){ $('#loginPanel')?.classList.remove('hidden'); $('#registerPanel')?.classList.add('hidden'); }
+    function showRegisterPanel(){ $('#registerPanel')?.classList.remove('hidden'); $('#loginPanel')?.classList.add('hidden'); }
+    async function api(path, opts={}){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(state.token?{'x-user-token':state.token}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
+    
+    function currentPreferenceSnapshot(){
+      return {
+        theme:state.theme,
+        bottomToolbarHidden:!!state.bottomToolbarHidden,
+        infoMode:state.infoMode,
+        tableSize:state.tableSize,
+        tableDayWidth:state.tableDayWidth,
+        tableRowHeight:state.tableRowHeight,
+        hideFifthSlot:!!state.hideFifthSlot,
+        courseSettings:state.courseSettings,
+        reminderSettings:loadReminderSettings()
+      };
+    }
+    function accountPreferenceKey(user=state.user){ return user?.id ? `xiaodeAccountPreferences:${user.id}` : ''; }
+    function saveAccountPreferencesLocal(snapshot=currentPreferenceSnapshot(), user=state.user){ const key=accountPreferenceKey(user); if(key) localStorage.setItem(key, JSON.stringify(snapshot)); }
+    function loadAccountPreferencesLocal(user=state.user){ try{ const key=accountPreferenceKey(user); return key?JSON.parse(localStorage.getItem(key)||'{}'):{}; }catch(_){ return {}; } }
+    let preferenceSaveTimer=null;
+    function schedulePreferenceSave(){
+      if(!state.user||!state.token||state.applyingPreferences) return;
+      const prefs=currentPreferenceSnapshot();
+      saveAccountPreferencesLocal(prefs);
+      const list=getSavedAccounts();
+      const idx=list.findIndex(x=>x.username===state.user.username);
+      if(idx>=0){ list[idx]={...list[idx], preferences:prefs, name:state.user.name, username:state.user.username, savedAt:new Date().toISOString()}; setSavedAccounts(list); }
+      clearTimeout(preferenceSaveTimer);
+      preferenceSaveTimer=setTimeout(async()=>{
+        try{ await api('/api/my/preferences',{method:'PUT',body:JSON.stringify({preferences:currentPreferenceSnapshot()})}); }
+        catch(e){ console.warn('preferences save failed', e); }
+      },500);
+    }
+    function applyAccountPreferences(pref={}){
+      const fallback=loadAccountPreferencesLocal();
+      const p={...fallback,...(pref||{})};
+      state.applyingPreferences=true;
+      try{
+        if(p.theme) applyTheme(p.theme);
+        if(p.infoMode) state.infoMode=p.infoMode;
+        if(typeof p.bottomToolbarHidden==='boolean') state.bottomToolbarHidden=!!p.bottomToolbarHidden;
+        if(p.tableSize) applyTableSize(p.tableSize,{width:p.tableDayWidth,height:p.tableRowHeight});
+        if(typeof p.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!p.hideFifthSlot; localStorage.setItem('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
+        if(p.courseSettings) saveCourseSettings(p.courseSettings);
+        if(p.reminderSettings) saveReminderSettings(p.reminderSettings);
+        localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+        updateBottomToolbar(!!state.user);
+        state.preferencesReady=true;
+        saveAccountPreferencesLocal(currentPreferenceSnapshot());
+      }finally{
+        state.applyingPreferences=false;
+      }
+    }
+
+    function pad(n){return String(n).padStart(2,'0')}
+    function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:Number(settings.totalWeeks||meta.totalWeeks||17),termStart:settings.termStart||meta.termStart||'',weekStartDay:Number(settings.weekStartDay||1)}; }
+    function totalWeeks(){ return Number(effectiveMeta().totalWeeks||17); }
+    function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem('xiaodeCourseSettings', JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
+    function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
+    const DEFAULT_12_SLOTS=[
+      {slot:1,label:'第1节',start:'08:00',end:'08:45',range:'08:00-08:45'},
+      {slot:2,label:'第2节',start:'08:55',end:'09:40',range:'08:55-09:40'},
+      {slot:3,label:'第3节',start:'10:00',end:'10:45',range:'10:00-10:45'},
+      {slot:4,label:'第4节',start:'10:55',end:'11:40',range:'10:55-11:40'},
+      {slot:5,label:'第5节',start:'11:50',end:'12:35',range:'11:50-12:35'},
+      {slot:6,label:'第6节',start:'14:00',end:'14:45',range:'14:00-14:45'},
+      {slot:7,label:'第7节',start:'14:50',end:'15:35',range:'14:50-15:35'},
+      {slot:8,label:'第8节',start:'15:55',end:'16:40',range:'15:55-16:40'},
+      {slot:9,label:'第9节',start:'16:45',end:'17:30',range:'16:45-17:30'},
+      {slot:10,label:'第10节',start:'18:20',end:'19:05',range:'18:20-19:05'},
+      {slot:11,label:'第11节',start:'19:10',end:'19:55',range:'19:10-19:55'},
+      {slot:12,label:'第12节',start:'20:05',end:'20:50',range:'20:05-20:50'}
+    ];
+    function normalizeClientSlots(slots=[]){
+      const by=new Map((Array.isArray(slots)?slots:[]).map(s=>[Number(s.slot),s]));
+      return DEFAULT_12_SLOTS.map(d=>{
+        const old=by.get(Number(d.slot))||{};
+        const start=String(old.start||String(old.range||'').split('-')[0]||d.start);
+        const end=String(old.end||String(old.range||'').split('-')[1]||d.end);
+        return {slot:Number(d.slot),label:String(old.label||d.label),start,end,range:(start&&end)?`${start}-${end}`:d.range};
+      });
+    }
+    function visibleSlots(){ return normalizeClientSlots(state.slots).filter(s=>!(state.hideFifthSlot && Number(s.slot)===5)); }
+    function weekDateObject(day, week=getSelectedWeek()){
+      const meta=effectiveMeta();
+      const start=new Date(`${meta.termStart||''}T00:00:00`);
+      if(Number.isNaN(start.getTime())) return null;
+      const weekStart=Number(meta.weekStartDay||1);
+      const offset=(Number(day)-weekStart+7)%7;
+      const d=new Date(start);
+      d.setDate(start.getDate()+(Number(week)-1)*7+offset);
+      return d;
+    }
+    function selectedWeekDate(day){
+      const d=weekDateObject(day);
+      if(!d) return '';
+      return `${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    }
+    function setHideFifthSlot(hidden){
+      state.hideFifthSlot=!!hidden;
+      localStorage.setItem('xiaodeHideFifthSlot', state.hideFifthSlot?'1':'0');
+      renderAll();
+      schedulePreferenceSave();
+      toast(state.hideFifthSlot?'已隐藏第5节':'已显示第5节');
+    }
+    function timeToMin(t){const [h,m]=String(t||'00:00').split(':').map(Number); return h*60+m}
+    function getWeek(now=new Date()){const meta=effectiveMeta(); const start=new Date(`${meta.termStart||'2025-02-17'}T00:00:00`); const diff=Math.floor((now-start)/86400000); return Math.max(1,Math.min(Number(meta.totalWeeks||17),Math.floor(diff/7)+1));}
+    function getSelectedWeek(){return state.previewWeek||getWeek()}
+    function getDayIndex(now=new Date()){const d=now.getDay(); return d===0?7:d}
+    function getSlot(num){return state.slots.find(s=>Number(s.slot)===Number(num))||{label:'',range:'',start:'00:00',end:'00:00'}}
+    function activeInWeek(c,w){if(!c.weeks.includes(w)) return false; if(c.oddEven==='odd'&&w%2===0) return false; if(c.oddEven==='even'&&w%2===1) return false; return true}
+    function coursesForWeek(w){return state.courses.filter(c=>activeInWeek(c,w)).sort((a,b)=>(a.day-b.day)||(a.slot-b.slot))}
+    function nowCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>c.day===d&&m>=timeToMin(getSlot(c.slot).start)&&m<=timeToMin(getSlot(c.slot).end))||null}
+    function nextCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>c.day>d||(c.day===d&&timeToMin(getSlot(c.slot).start)>m))||null}
+    function soonCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>c.day===d&&timeToMin(getSlot(c.slot).start)>m&&timeToMin(getSlot(c.slot).start)-m<=10)||null}
+    function courseMergeKey(c){ return [c.name||'',c.shortName||'',c.teacher||'',c.location||'',c.classGroup||'',c.category||'',c.oddEven||'all'].map(v=>String(v).trim().toLowerCase()).join('|'); }
+    function groupSameCourses(list){
+      const map=new Map();
+      (list||[]).forEach(c=>{ const key=courseMergeKey(c); if(!map.has(key)) map.set(key,{key,course:c,count:0,ids:[]}); const g=map.get(key); g.count+=1; g.ids.push(c.id); });
+      return Array.from(map.values()).sort((a,b)=>(a.course.slot-b.course.slot)||String(a.course.name||'').localeCompare(String(b.course.name||''),'zh-Hans-CN'));
+    }
+    function coursesForCell(day,slot,week){ return state.courses.filter(c=>Number(c.day)===Number(day)&&Number(c.slot)===Number(slot)&&activeInWeek(c,week)); }
+    function groupsForCell(day,slot,week){ return groupSameCourses(coursesForCell(day,slot,week)); }
+    function canSpanNext(group,day,slot,week){ const groups=groupsForCell(day,slot,week); return groups.length===1 && groups[0].key===group.key; }
+    function groupStatusClass(group,current,soon,week,actualWeek){ if(week!==actualWeek) return ''; const ids=group?.ids||[]; if(current&&ids.includes(current.id)) return 'current'; if(soon&&ids.includes(soon.id)) return 'soon'; return ''; }
+    function buildCourse(c,cls='',opts={}){ const settings=state.courseSettings||DEFAULT_COURSE_SETTINGS; const display=escapeHtml(c.shortName||c.name||''); const teacher=escapeHtml(c.teacher||''); const location=escapeHtml(c.location||''); const classGroup=escapeHtml(c.classGroup||''); const metaParts=[]; if(settings.showTeacher && state.infoMode==='full' && teacher) metaParts.push(teacher); if(settings.showLocation && location) metaParts.push(location); if(settings.showClassGroup && classGroup) metaParts.push(classGroup); const meta=metaParts.join('<br>'); const count=Number(opts.count||0); const span=Number(opts.span||1); const countBadge=count>1?`<div class="merge-count">×${count}</div>`:''; const spanBadge=span>1?`<div class="merge-span">${opts.startSlot||c.slot}-${opts.endSlot||c.slot}节</div>`:''; return `<div class="course ${cls}" data-id="${c.id}" title="${escapeHtml(c.name||'')}" style="background:${STYLE[c.category]||STYLE.custom}">${cls?`<div class="mark">${cls==='current'?'进行中':'即将上课'}</div>`:''}${countBadge}<div class="name">${display}</div><div class="meta2">${meta}</div>${spanBadge}</div>`}
+    function fillSelectors(){ $('#courseDay').innerHTML=DAYS.map((d,i)=>`<option value="${i+1}">${d}</option>`).join(''); $('#courseSlot').innerHTML=visibleSlots().map(s=>`<option value="${s.slot}">${s.label}</option>`).join(''); }
+    function renderAuthState(loggedIn){
+  $('#heroSection')?.classList.add('hidden');
+  $('#accountAvatarBtn')?.classList.add('hidden');
+  updateBottomToolbar(loggedIn);
+  $('#authSection').classList.toggle('hidden',loggedIn);
+  $('#mainBar').classList.toggle('hidden',!loggedIn);
+  $('#mainSection').classList.toggle('hidden',!loggedIn);
+  $('#drawer').classList.add('hidden');
+  const hub=$('#featureHub');
+  if(hub){
+    if(loggedIn && state.bottomToolbarHidden) hub.classList.remove('hidden','collapsed');
+    else hub.classList.add('hidden','collapsed');
+  }
+}
+    function updateBottomToolbar(loggedIn=!!state.user){
+      const hidden=!loggedIn || state.bottomToolbarHidden;
+      $('#mobileBottomToolbar')?.classList.toggle('hidden', hidden);
+      document.body.classList.toggle('toolbar-hidden', !!state.bottomToolbarHidden);
+      updateToolbarToggleTile();
+    }
+    function updateToolbarToggleTile(){
+      const hidden=!!state.bottomToolbarHidden;
+      $$('[data-feature-action="toggleToolbar"]').forEach(btn=>{
+        btn.classList.toggle('is-hidden', hidden);
+        const icon=btn.querySelector('span');
+        const label=btn.querySelector('b');
+        if(icon) icon.textContent=hidden?'⌃':'⌄';
+        if(label) label.textContent=hidden?'显示工具栏':'隐藏工具栏';
+        btn.title=hidden?'显示底部工具栏':'隐藏底部工具栏';
+      });
+    }
+    function setBottomToolbarHidden(hidden){
+      state.bottomToolbarHidden=!!hidden;
+      localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+      updateBottomToolbar(!!state.user);
+      schedulePreferenceSave();
+      if(state.bottomToolbarHidden){
+        openFeatureHub({scroll:false});
+        toast('已隐藏底部工具栏，课表工具会常驻在下方，可在这里恢复');
+      } else {
+        toast('已显示底部工具栏');
+      }
+    }
+    function normalizeTableSize(size){return ['classic','screenshot','classroom'].includes(size)?size:'classic';}
+    function defaultTableDayWidth(size){
+      const mode=normalizeTableSize(size);
+      if(mode==='screenshot') return 42;
+      if(mode==='classroom') return 52;
+      return 48;
+    }
+    function defaultTableRowHeight(size){
+      const mode=normalizeTableSize(size);
+      if(mode==='screenshot') return 72;
+      if(mode==='classroom') return 78;
+      return 118;
+    }
+    function normalizeTableDayWidth(value,size=state.tableSize){
+      const n=Number(value);
+      if(!Number.isFinite(n) || n<=0) return defaultTableDayWidth(size);
+      return Math.max(38, Math.min(96, Math.round(n)));
+    }
+    function normalizeTableRowHeight(value,size=state.tableSize){
+      const n=Number(value);
+      if(!Number.isFinite(n) || n<=0) return defaultTableRowHeight(size);
+      return Math.max(58, Math.min(160, Math.round(n)));
+    }
+    function tableSizeLabel(size){
+      const mode=normalizeTableSize(size);
+      return mode==='screenshot'?'一屏截图':(mode==='classroom'?'教室优先':'经典卡片');
+    }
+    function applyTableSize(size, opts={}){
+      state.tableSize=normalizeTableSize(size);
+      const hasWidth=Object.prototype.hasOwnProperty.call(opts,'width');
+      const hasHeight=Object.prototype.hasOwnProperty.call(opts,'height');
+      const storedWidth=localStorage.getItem('xiaodeTableDayWidth');
+      const storedHeight=localStorage.getItem('xiaodeTableRowHeight');
+      state.tableDayWidth=normalizeTableDayWidth(hasWidth?opts.width:(storedWidth || defaultTableDayWidth(state.tableSize)), state.tableSize);
+      state.tableRowHeight=normalizeTableRowHeight(hasHeight?opts.height:(storedHeight || defaultTableRowHeight(state.tableSize)), state.tableSize);
+      document.body.dataset.tableSize=state.tableSize;
+      document.body.style.setProperty('--xiaode-day-width', `${state.tableDayWidth}px`);
+      document.body.style.setProperty('--xiaode-row-height', `${state.tableRowHeight}px`);
+      localStorage.setItem('xiaodeTableSize', state.tableSize);
+      localStorage.setItem('xiaodeTableDayWidth', String(state.tableDayWidth));
+      localStorage.setItem('xiaodeTableRowHeight', String(state.tableRowHeight));
+      updateTableSizeTile();
+    }
+    function updateTableWidthControls(){
+      const range=$('#tableWidthRange');
+      const value=$('#tableWidthValue');
+      const heightRange=$('#tableHeightRange');
+      const heightValue=$('#tableHeightValue');
+      if(range) range.value=String(state.tableDayWidth);
+      if(value) value.textContent=`当前列宽：${state.tableDayWidth}px`;
+      if(heightRange) heightRange.value=String(state.tableRowHeight);
+      if(heightValue) heightValue.textContent=`当前长度：${state.tableRowHeight}px`;
+    }
+    function updateTableSizeTile(){
+      const mode=normalizeTableSize(state.tableSize);
+      $$('[data-feature-action="tableSize"]').forEach(btn=>{
+        btn.classList.toggle('is-screenshot', mode==='screenshot');
+        btn.classList.toggle('is-classroom', mode==='classroom');
+        const label=btn.querySelector('b');
+        if(label) label.textContent=mode==='classic'?'课表尺寸':tableSizeLabel(mode);
+        btn.title=`当前：${tableSizeLabel(mode)} · 宽 ${state.tableDayWidth}px · 长 ${state.tableRowHeight}px`;
+      });
+      $$('.table-size-option').forEach(btn=>btn.classList.toggle('active', btn.dataset.tableSize===state.tableSize));
+      updateTableWidthControls();
+    }
+    function setTableSize(size){
+      const mode=normalizeTableSize(size);
+      applyTableSize(mode,{width:defaultTableDayWidth(mode),height:defaultTableRowHeight(mode)});
+      renderAll();
+      schedulePreferenceSave();
+      toast(`已切换：${tableSizeLabel(mode)}模式`);
+    }
+    function setTableDayWidth(width, silent=false){
+      applyTableSize(state.tableSize,{width});
+      renderAll();
+      updateTableWidthControls();
+      schedulePreferenceSave();
+      if(!silent) toast(`列宽已调到 ${state.tableDayWidth}px`);
+    }
+    function setTableRowHeight(height, silent=false){
+      applyTableSize(state.tableSize,{height});
+      renderAll();
+      updateTableWidthControls();
+      schedulePreferenceSave();
+      if(!silent) toast(`长度已调到 ${state.tableRowHeight}px`);
+    }
+    function openTableSizePanel(){
+      openModal('课表尺寸', `
+        <div class="table-size-options">
+          <button class="table-size-option" type="button" data-table-size="classic"><b>经典卡片</b><small>保留圆角卡片感，适合日常查看。</small></button>
+          <button class="table-size-option" type="button" data-table-size="screenshot"><b>一屏截图</b><small>压缩行高和外边距，尽量把整张周课表截进一页。</small></button>
+          <button class="table-size-option" type="button" data-table-size="classroom"><b>教室优先</b><small>课程名自动省略，突出显示教室/地点。</small></button>
+        </div>
+        <div class="table-width-control">
+          <div class="table-width-head"><b>自由调节列宽</b><span id="tableWidthValue">当前列宽：${state.tableDayWidth}px</span></div>
+          <input id="tableWidthRange" type="range" min="38" max="96" step="1" value="${state.tableDayWidth}" />
+          <div class="table-width-presets"><span>窄</span><span>标准</span><span>宽</span></div>
+        </div>
+        <div class="table-length-control">
+          <div class="table-length-head"><b>自由调节长度</b><span id="tableHeightValue">当前长度：${state.tableRowHeight}px</span></div>
+          <input id="tableHeightRange" type="range" min="58" max="160" step="1" value="${state.tableRowHeight}" />
+          <div class="table-width-presets"><span>短</span><span>标准</span><span>长</span></div>
+          <div class="secondary-note">长度控制每一节课格子的高度；调短后更容易把整张周课表放进一个屏幕或一张截图。</div>
+        </div>
+      `);
+      $$('.table-size-option').forEach(btn=>btn.onclick=()=>setTableSize(btn.dataset.tableSize));
+      const range=$('#tableWidthRange');
+      if(range){ range.oninput=()=>setTableDayWidth(range.value,true); range.onchange=()=>toast(`列宽已调到 ${state.tableDayWidth}px`); }
+      const heightRange=$('#tableHeightRange');
+      if(heightRange){ heightRange.oninput=()=>setTableRowHeight(heightRange.value,true); heightRange.onchange=()=>toast(`长度已调到 ${state.tableRowHeight}px`); }
+      updateTableSizeTile();
+    }
+      function renderHeader(){ const now=new Date(); $('#appTitle').textContent=APP_NAME; document.title=APP_NAME; $('#dateLine').textContent=''; $('#noticeLine').textContent=''; $('#ownerName').textContent=state.user?`${state.user.name} 的`:'我的'; if(!state.user){$('#statusPill').textContent='请先登录'; $('#nextName').textContent='每个同学都有自己的课表'; $('#nextMeta').textContent='登录后只看自己的数据，互不影响'; return;} const current=nowCourse(now), soon=soonCourse(now), next=nextCourse(now); if(current){$('#statusPill').textContent=`${state.user.name} 正在上课`; $('#nextName').textContent=current.name; $('#nextMeta').textContent=`${DAYS[current.day-1]} · ${getSlot(current.slot).label} · ${current.location}`;} else if(soon){$('#statusPill').textContent='即将上课'; $('#nextName').textContent=soon.name; $('#nextMeta').textContent=`${DAYS[soon.day-1]} · ${getSlot(soon.slot).range} · ${soon.location}`;} else if(next){$('#statusPill').textContent='课间休息'; $('#nextName').textContent=next.name; $('#nextMeta').textContent=`${DAYS[next.day-1]} · ${getSlot(next.slot).label} · ${next.location}`;} else {$('#statusPill').textContent='今日结束'; $('#nextName').textContent='今天没有下一节课'; $('#nextMeta').textContent='可以休息一下';} const w=getSelectedWeek(); const isCurrentWeek=w===getWeek(now); $('#weekTitle').textContent=`第 ${w} 周`; $('#weekBadge').textContent='本周'; $('#weekBadge').classList.toggle('week-current', isCurrentWeek); $('#parityBadge').textContent=w%2===0?'双周':'单周'; $('#termLine').textContent=''; }
+    function renderWeeks(){ $('#weekStrip').innerHTML=''; }
+    function renderTable(){
+      const now=new Date(), actualWeek=getWeek(now), week=getSelectedWeek(), today=getDayIndex(now);
+      const current=nowCourse(now), soon=soonCourse(now), slots=visibleSlots();
+      const occupied=new Set();
+      const weekHead=`第${week}周`;
+      let html=`<div class="head week-head" style="grid-column:1;grid-row:1">${weekHead}</div>${DAYS.map((d,i)=>{
+        const isToday=week===actualWeek&&i+1===today;
+        const sub=isToday?'今天':selectedWeekDate(i+1);
+        return `<div class="head ${isToday?'today':''}" style="grid-column:${i+2};grid-row:1"><div class="day-main">${d}</div><div class="day-sub">${sub}</div></div>`;
+      }).join('')}`;
+      slots.forEach((slot,slotIdx)=>{
+        const row=slotIdx+2;
+        html+=`<div class="timecell" style="grid-column:1;grid-row:${row}"><div class="name" style="font-size:19px;color:var(--text)">${slot.slot}</div><div class="muted">${slot.range}</div></div>`;
+      });
+      for(let day=1; day<=7; day++){
+        for(let slotIdx=0; slotIdx<slots.length; slotIdx++){
+          const slot=slots[slotIdx];
+          const row=slotIdx+2;
+          const occKey=`${day}-${slot.slot}`;
+          if(occupied.has(occKey)) continue;
+          const todayCls=(week===actualWeek&&day===today)?'today':'';
+          const groups=groupsForCell(day,slot.slot,week);
+          if(!groups.length){
+            html+=`<div class="slot ${todayCls} empty-clickable" data-day="${day}" data-slot="${slot.slot}" style="grid-column:${day+1};grid-row:${row}"><div class="empty-slot"></div></div>`;
+            continue;
+          }
+          if(groups.length>1){
+            const stack=groups.map(g=>{ const cls=groupStatusClass(g,current,soon,week,actualWeek); return buildCourse(g.course,cls,{count:g.count}); }).join('');
+            html+=`<div class="slot ${todayCls} stacked" style="grid-column:${day+1};grid-row:${row}">${stack}</div>`;
+            continue;
+          }
+          const g=groups[0];
+          let span=1;
+          while(slotIdx+span<slots.length && canSpanNext(g,day,slots[slotIdx+span].slot,week)){
+            occupied.add(`${day}-${slots[slotIdx+span].slot}`);
+            span++;
+          }
+          const cls=groupStatusClass(g,current,soon,week,actualWeek);
+          html+=`<div class="slot ${todayCls} merged" style="grid-column:${day+1};grid-row:${row} / span ${span}">${buildCourse(g.course,cls,{count:g.count,span,startSlot:slot.slot,endSlot:slots[slotIdx+span-1].slot})}</div>`;
+        }
+      }
+      $('#table').innerHTML=html;
+      bindCourseClicks();
+    }
+    function mergedDayItems(day,week){
+      const slots=visibleSlots();
+      const items=[];
+      for(let slotIdx=0; slotIdx<slots.length; slotIdx++){
+        const slot=slots[slotIdx];
+        const groups=groupsForCell(day,slot.slot,week);
+        if(!groups.length) continue;
+        if(groups.length>1){ groups.forEach(g=>items.push({...g,span:1,startSlot:slot.slot,endSlot:slot.slot})); continue; }
+        const g={...groups[0],span:1,startSlot:slot.slot,endSlot:slot.slot};
+        while(slotIdx+g.span<slots.length && canSpanNext(g,day,slots[slotIdx+g.span].slot,week)){
+          g.endSlot=slots[slotIdx+g.span].slot;
+          g.span++;
+        }
+        slotIdx+=g.span-1;
+        items.push(g);
+      }
+      return items;
+    }
+    function renderMobile(){ const week=getSelectedWeek(), actualWeek=getWeek(), today=getDayIndex(); $('#mobileList').innerHTML=DAYS.map((d,idx)=>{ const items=mergedDayItems(idx+1,week); return `<section class="card mday"><div class="mday-title">${d}${week===actualWeek&&today===idx+1?' · 今天':''}</div>${items.length?items.map(g=>{ const c=g.course; return `<div style="margin-top:10px">${buildCourse(c,'',{count:g.count,span:g.span,startSlot:g.startSlot,endSlot:g.endSlot})}</div>` }).join(''):'<div class="muted">无课程</div>'}</section>` }).join(''); bindCourseClicks(); }
+    function renderSlots(){
+      const table=$('#slotsTable');
+      if(!table) return;
+      state.slots=normalizeClientSlots(state.slots);
+      table.innerHTML=`<tr><th>节次</th><th>名称</th><th>开始</th><th>结束</th></tr>` + state.slots.map(s=>`<tr data-slot="${Number(s.slot)}">
+        <td class="slot-num">${Number(s.slot)}</td>
+        <td><input data-field="label" value="${escapeHtml(s.label||('第'+s.slot+'节'))}" /></td>
+        <td><input data-field="start" type="time" value="${escapeHtml(s.start||String(s.range||'').split('-')[0]||'')}" /></td>
+        <td><input data-field="end" type="time" value="${escapeHtml(s.end||String(s.range||'').split('-')[1]||'')}" /></td>
+      </tr>`).join('');
+      const saveBtn=$('#saveSlotsBtn');
+      const resetBtn=$('#resetSlotsBtn');
+      const hideBtn=$('#hideFifthSlotBtn');
+      if(saveBtn) saveBtn.onclick=saveSlotTimes;
+      if(resetBtn) resetBtn.onclick=resetSlotTimes;
+      if(hideBtn){ hideBtn.textContent=state.hideFifthSlot?'显示第5节':'隐藏第5节'; hideBtn.onclick=()=>setHideFifthSlot(!state.hideFifthSlot); }
+    }
+
+        function collectSlotTimes(){
+      const rows=$$('#slotsTable tr[data-slot]');
+      const slots=rows.map((row,idx)=>{
+        const slot=Number(row.dataset.slot||idx+1);
+        const label=row.querySelector('[data-field="label"]')?.value.trim() || `第${slot}节`;
+        const start=row.querySelector('[data-field="start"]')?.value.trim() || '';
+        const end=row.querySelector('[data-field="end"]')?.value.trim() || '';
+        return {slot,label,start,end,range:(start&&end)?`${start}-${end}`:''};
+      });
+      if(!slots.length) throw new Error('没有可保存的节次');
+      for(const s of slots){
+        if(!/^\d{2}:\d{2}$/.test(s.start)||!/^\d{2}:\d{2}$/.test(s.end)) throw new Error(`${s.label} 的开始/结束时间不完整`);
+        if(timeToMin(s.start)>=timeToMin(s.end)) throw new Error(`${s.label} 的结束时间要晚于开始时间`);
+      }
+      return slots;
+    }
+    async function saveSlotTimes(){
+      try{
+        const slots=collectSlotTimes();
+        const data=await api('/api/my/slots',{method:'PUT',body:JSON.stringify({slots})});
+        state.slots=normalizeClientSlots(data.slots||slots);
+        fillSelectors();
+        renderAll();
+        renderSlots();
+        syncWidgetNow('saveSlotTimes');
+        toast('节次时间已保存');
+      }catch(e){toast(e.message||'保存失败')}
+    }
+    async function resetSlotTimes(){
+      if(!confirm('恢复默认节次时间？课程不会被删除。')) return;
+      try{
+        const data=await api('/api/my/slots',{method:'DELETE'});
+        state.slots=normalizeClientSlots(data.slots||state.slots);
+        fillSelectors();
+        renderAll();
+        renderSlots();
+        syncWidgetNow('resetSlotTimes');
+        toast('已恢复默认节次时间');
+      }catch(e){toast(e.message||'恢复失败')}
+    }
+    function bindCourseClicks(){ $$('.course[data-id]').forEach(el=>el.onclick=()=>openCourse(el.dataset.id)); $$('.slot.empty-clickable').forEach(el=>el.onclick=()=>openAddCourseModal(Number(el.dataset.day), Number(el.dataset.slot))); }
+    function openModal(title,body){ $('#modalTitle').textContent=title; $('#modalBody').innerHTML=body; $('#modal').classList.remove('hidden'); $('#backdrop').classList.remove('hidden'); document.body.classList.add('modal-open'); setTimeout(()=>$('#modalCourseName')?.focus(),80); }
+    function closeModal(){
+      if(state.drawerPlaceholder && $('#drawer')){
+        state.drawerPlaceholder.parentNode?.insertBefore($('#drawer'), state.drawerPlaceholder);
+        state.drawerPlaceholder.remove();
+        state.drawerPlaceholder=null;
+        $('#drawer')?.classList.add('hidden');
+      }
+      $('#modal').classList.add('hidden'); $('#backdrop').classList.add('hidden'); document.body.classList.remove('modal-open');
+    }
+    function isLocalHost(){ return ['localhost','127.0.0.1','::1'].includes(location.hostname); }
+    function updateTrialFeatures(){
+      $('#jwxtImportSection')?.classList.remove('hidden');
+      $('#jwxtRemoteNotice')?.classList.add('hidden');
+      $('#viewFeedbackBtn')?.classList.toggle('hidden', !(state.user && state.user.role === 'admin'));
+      $('#viewUsersBtn')?.classList.toggle('hidden', !(state.user && state.user.role === 'admin'));
+    }
+    function escapeHtml(value){
+      return String(value ?? '').replace(/[<>&"']/g, m => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+    function openHelpModal(){
+      openModal('小德课表使用说明', `
+        <div class="detail" style="margin-bottom:12px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">普通使用流程</div>
+          <div>1. 先注册一个小德课表账号，或登录已有账号。</div>
+          <div>2. 登录后只会看到自己的课表，别人的课表不会混在一起。</div>
+          <div>3. 点“今日课程”可以快速查看今天的课。</div>
+          <div>4. 点“回到本周”可以从预览周返回当前周。</div>
+          <div>5. 常用功能在“功能中心”，课程编辑在“管理中心”。</div>
+        </div>
+        <div class="detail" style="margin-bottom:12px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">从教务系统导入</div>
+          <div>1. 在 Android“小德课表 App”里打开本网页并登录小德账号。</div>
+          <div>2. 点击功能中心里的“教务导入”。</div>
+          <div>3. 网页自动生成一次性导入码并交给 App，不需要手动复制。</div>
+          <div>4. App 切到教务系统 WebView，用户自己登录，然后读取并上传课表。</div>
+          <div>5. 全程不在小德课表里输入教务系统密码，也不再要求同学运行控制台脚本。</div>
+        </div>
+        <div class="detail">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">如果出问题</div>
+          <div>导入失败时，优先检查 App 内教务系统是否已登录、校园网/热点网络、教务系统是否需要验证码、学年学期是否填对。</div>
+          <div>仍然不行的话，点“反馈建议”，选择“教务导入”，把报错内容发给管理员。</div>
+        </div>
+      `);
+    }
+    function explainJwxtError(message){
+      const msg=String(message||'教务系统导入失败');
+      let reason='暂时无法确定具体原因。';
+      let actions=['确认教务系统账号密码正确。','确认当前网络能打开教务系统。','稍后重试，避开教务系统拥堵时段。'];
+      if(/账号|密码|用户名|login|登录失败|invalid|incorrect/i.test(msg)){
+        reason='更像是教务系统账号或密码不正确，或者登录后页面没有进入系统首页。';
+        actions=['重新输入教务账号和密码。','先在浏览器里手动登录教务系统，确认密码没有过期。','如果学校要求修改初始密码，请先在教务系统里处理。'];
+      }else if(/验证码|captcha|verify|验证/i.test(msg)){
+        reason='教务系统可能要求验证码或额外验证，当前自动导入无法完成。';
+        actions=['先在浏览器手动登录一次教务系统。','稍后重试。','把截图或报错通过“反馈建议”发给管理员，后续可以加验证码方案。'];
+      }else if(/timeout|超时|Waiting failed/i.test(msg)){
+        reason='登录或课表接口等待超时，常见于教务系统慢、网络不通、或页面卡在验证环节。';
+        actions=['确认电脑后端所在网络能访问教务系统。','检查是否必须连接校园网。','稍后再试，或换热点/校园网测试。'];
+      }else if(/JSON|课表接口|kbList|识别/i.test(msg)){
+        reason='已经访问到教务系统，但课表接口返回格式不是预期的完整课表数据。';
+        actions=['检查学年 xnm 和学期 xqm 是否正确。','确认该账号当前学期确实有课表。','把报错内容反馈给管理员。'];
+      }else if(/blocked|ERR_BLOCKED|拦截|net::/i.test(msg)){
+        reason='浏览器或网络环境拦截了教务系统页面。';
+        actions=['关闭广告拦截/安全拦截类插件。','改用校园网或手机热点测试。','确认 Windows 防火墙允许 Node.js 访问网络。'];
+      }
+      return {reason,actions,raw:msg};
+    }
+    function openJwxtErrorModal(message){
+      const info=explainJwxtError(message);
+      openModal('教务导入失败', `
+        <div class="detail" style="margin-bottom:12px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">可能原因</div>
+          <div>${escapeHtml(info.reason)}</div>
+        </div>
+        <div class="detail" style="margin-bottom:12px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">建议处理</div>
+          ${info.actions.map((a,i)=>`<div>${i+1}. ${escapeHtml(a)}</div>`).join('')}
+        </div>
+        <div class="detail">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">原始报错</div>
+          <div style="white-space:pre-wrap">${escapeHtml(info.raw)}</div>
+        </div>
+        <div class="inline"><button class="btn primary" id="feedbackFromErrorBtn">把这个问题反馈给管理员</button></div>
+      `);
+      const btn=$('#feedbackFromErrorBtn');
+      if(btn) btn.onclick=()=>{
+        closeModal();
+        openFeedbackModal();
+        setTimeout(()=>{
+          const type=$('#feedbackType'); const content=$('#feedbackContent');
+          if(type) type.value='教务导入';
+          if(content) content.value=`教务导入失败：\n${info.raw}\n\n我尝试过：`;
+        },50);
+      };
+    }
+    async function openAdminUsers(){
+      try{
+        const r=await api('/api/admin/users');
+        const users=r.users||[];
+        const html=users.length?`
+          <div class="detail" style="margin-bottom:12px">共 ${users.length} 个用户。课程数只统计当前保存到小德课表里的课程。</div>
+          <table class="mini-table">
+            <tr><th>姓名</th><th>用户名</th><th>角色</th><th>课程</th><th>注册时间</th><th>操作</th></tr>
+            ${users.map(u=>`<tr>
+              <td>${escapeHtml(u.name)}</td>
+              <td>${escapeHtml(u.username)}</td>
+              <td>${escapeHtml(u.role)}</td>
+              <td>${Number(u.courseCount||0)}</td>
+              <td>${u.createdAt?new Date(u.createdAt).toLocaleString():'--'}</td>
+              <td>${u.role==='admin'?'--':`<button class="btn danger" data-delete-user="${escapeHtml(u.id)}" data-name="${escapeHtml(u.name||u.username)}">删除</button>`}</td>
+            </tr>`).join('')}
+          </table>`:'<div class="detail">暂无用户。</div>';
+        openModal('用户列表', html);
+        $$('[data-delete-user]').forEach(btn=>btn.onclick=async()=>{
+          const name=btn.dataset.name||'这个用户';
+          if(!confirm(`确定删除 ${name} 吗？该用户的课程、会话和反馈也会一起删除。`)) return;
+          try{
+            await api(`/api/admin/users/${btn.dataset.deleteUser}`,{method:'DELETE'});
+            toast('用户已删除');
+            await openAdminUsers();
+          }catch(e){toast(e.message)}
+        });
+      }catch(e){toast(e.message)}
+    }
+    function openFeedbackModal(){
+      if(!state.user){ toast('请先登录后再反馈'); return; }
+      openModal('反馈建议', `
+        <div class="detail" style="margin-bottom:12px">谢谢你愿意帮小德课表变得更好。可以写显示问题、导入问题、功能建议，或任何使用感受。</div>
+        <div class="row"><label>类型</label><select id="feedbackType"><option>问题反馈</option><option>功能建议</option><option>界面体验</option><option>教务导入</option><option>其他</option></select></div>
+        <div class="row"><label>反馈内容</label><textarea id="feedbackContent" placeholder="比如：手机竖屏某个课程卡片太挤 / 今日课程很好用 / 希望增加……"></textarea></div>
+        <div class="row"><label>联系方式，可不填</label><input id="feedbackContact" placeholder="微信、QQ 或昵称，方便追问细节" /></div>
+        <div class="inline"><button class="btn primary" id="submitFeedbackBtn">提交反馈</button><button class="btn ghost" id="cancelFeedbackBtn">取消</button></div>
+      `);
+      $('#cancelFeedbackBtn').onclick=closeModal;
+      $('#submitFeedbackBtn').onclick=async()=>{
+        try{
+          const content=$('#feedbackContent').value.trim();
+          if(!content) return toast('请先写一点反馈内容');
+          await api('/api/my/feedback',{method:'POST',body:JSON.stringify({type:$('#feedbackType').value,content,contact:$('#feedbackContact').value.trim(),page:location.href,userAgent:navigator.userAgent})});
+          closeModal();
+          toast('反馈已收到，谢谢你');
+        }catch(e){toast(e.message)}
+      };
+    }
+    async function openFeedbackList(){
+      try{
+        const r=await api('/api/admin/feedbacks');
+        const list=r.feedbacks||[];
+        const html=list.length?list.map(f=>`<div class="detail" style="margin-bottom:10px"><div><b>${escapeHtml(f.type||'反馈')}</b> · ${escapeHtml(f.name||f.username||'未知用户')} · ${f.createdAt?new Date(f.createdAt).toLocaleString():'--'}</div><div style="white-space:pre-wrap;margin-top:6px">${escapeHtml(f.content||'')}</div>${f.contact?`<div class="muted" style="margin-top:6px">联系方式：${escapeHtml(f.contact)}</div>`:''}</div>`).join(''):'<div class="detail">暂时还没有反馈。</div>';
+        openModal('反馈列表', html);
+      }catch(e){toast(e.message)}
+    }
+    function showTodayCourses(){
+  if(!state.user){
+    toast('请先登录');
+    return;
+  }
+
+  const today = getDayIndex();
+  const currentWeek = getWeek();
+  state.previewWeek = currentWeek;
+
+  const list = coursesForWeek(currentWeek).filter(c => c.day === today);
+
+  renderAll();
+
+  if(!list.length){
+    openModal('今日课程', `<div class="detail">今天没有课程，可以休息一下。</div>`);
+    return;
+  }
+
+  const html = list.map(c => `
+    <div class="detail" style="margin-bottom:10px">
+      <div style="font-weight:900;font-size:18px">${c.name}</div>
+      <div>时间：${DAYS[c.day-1]} · ${getSlot(c.slot).label} (${getSlot(c.slot).range})</div>
+      <div>地点：${c.location || '--'}</div>
+      <div>老师：${c.teacher || '--'}</div>
+      <div>周次：${c.weekText || '--'}</div>
+    </div>
+  `).join('');
+
+  openModal('今日课程', html);
+
+  setTimeout(() => {
+    $('#mainSection')?.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 100);
+}
+    function openAddCourseModal(day, slot){
+          if(!state.user){ toast('请先登录后再添加课程'); return; }
+          const slotInfo=getSlot(slot);
+          openModal('添加课程', `
+            <div class="form-grid quick-course-form">
+              <div class="row"><label>课程名</label><input id="modalCourseName" placeholder="例如：高等数学" autocomplete="off" /></div>
+              <div class="row"><label>课表简称</label><input id="modalCourseShortName" placeholder="可选，优先显示" autocomplete="off" /></div>
+              <div class="row module-teacher"><label>老师</label><input id="modalCourseTeacher" autocomplete="off" /></div>
+              <div class="row module-location"><label>地点 / 教室</label><input id="modalCourseLocation" placeholder="例如：博文楼0117" autocomplete="off" /></div>
+              <div class="row module-class-group"><label>班级</label><input id="modalCourseClassGroup" placeholder="可选" autocomplete="off" /></div>
+              <div class="row"><label>星期</label><select id="modalCourseDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${i+1===day?'selected':''}>${d}</option>`).join('')}</select></div>
+              <div class="row"><label>节次</label><select id="modalCourseSlot">${state.slots.map(s=>`<option value="${s.slot}" ${Number(s.slot)===slot?'selected':''}>${s.label} ${s.range||''}</option>`).join('')}</select></div>
+              <div class="row"><label>周次</label><input id="modalCourseWeekText" value="1-${totalWeeks()}周" autocomplete="off" /></div>
+              <div class="row"><label>单双周</label><select id="modalCourseOddEven"><option value="all">全部</option><option value="odd">单周</option><option value="even">双周</option></select></div>
+              <div class="row"><label>分类</label><select id="modalCourseCategory"><option value="public_required">公共必修</option><option value="major_required">专业必修</option><option value="major_elective">专业选修</option><option value="public_elective">公共选修</option><option value="lab">实验</option><option value="custom">自定义</option></select></div>
+            </div>
+            <div class="detail" style="margin-top:10px">位置：${DAYS[day-1]} · ${slotInfo.label||('第'+slot+'节')} ${slotInfo.range||''}</div>
+            <div class="inline modal-actions-sticky"><button class="btn primary" id="modalSaveCourseBtn" type="button">保存到课表</button><button class="btn ghost" id="modalCancelCourseBtn" type="button">取消</button></div>
+          `);
+          const saveBtn=$('#modalSaveCourseBtn');
+          const cancelBtn=$('#modalCancelCourseBtn');
+          if(cancelBtn) cancelBtn.onclick=closeModal;
+          if(saveBtn){
+            saveBtn.onclick=async()=>{
+              if(saveBtn.disabled) return;
+              try{
+                const payload={
+                  name:($('#modalCourseName')?.value||'').trim(),
+                  shortName:($('#modalCourseShortName')?.value||'').trim(),
+                  teacher:($('#modalCourseTeacher')?.value||'').trim(),
+                  location:($('#modalCourseLocation')?.value||'').trim(),
+                  classGroup:($('#modalCourseClassGroup')?.value||'').trim(),
+                  day:Number($('#modalCourseDay')?.value||day),
+                  slot:Number($('#modalCourseSlot')?.value||slot),
+                  weekText:($('#modalCourseWeekText')?.value||`1-${totalWeeks()}周`).trim(),
+                  oddEven:$('#modalCourseOddEven')?.value||'all',
+                  category:$('#modalCourseCategory')?.value||'custom'
+                };
+                if(!payload.name){ toast('请填写课程名'); $('#modalCourseName')?.focus(); return; }
+                if(!payload.day || !payload.slot){ toast('请确认星期和节次'); return; }
+                saveBtn.disabled=true;
+                const oldText=saveBtn.textContent;
+                saveBtn.textContent='保存中…';
+                await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)});
+                await loadMe();
+                closeModal();
+                toast('课程已添加');
+                saveBtn.textContent=oldText;
+                saveBtn.disabled=false;
+              }catch(e){
+                console.error(e);
+                saveBtn.disabled=false;
+                saveBtn.textContent='保存到课表';
+                toast(e.message||'保存失败，请重试');
+              }
+            };
+          }
+        }
+        function openCourse(id){ const c=state.courses.find(x=>x.id===id); if(!c) return; openModal(c.shortName?`${c.shortName} · ${c.name}`:c.name,`<div class="detail"><div>全称：${c.name||'--'}</div><div>简称：${c.shortName||'--'}</div><div>老师：${c.teacher||'--'}</div><div>地点：${c.location||'--'}</div><div>班级：${c.classGroup||'--'}</div><div>时间：${DAYS[c.day-1]} · ${getSlot(c.slot).label} (${getSlot(c.slot).range})</div><div>周次：${c.weekText||'--'}</div><div style="margin-top:8px"><span class="tag">${c.category}</span></div></div><div class="inline"><button class="btn primary" id="editFromModal">编辑这门课</button></div>`); $('#editFromModal').onclick=()=>{loadCourseToForm(c); closeModal(); openManagePanel('course');}; }
+    function loadCourseToForm(c){ state.editingCourse=c; $('#courseName').value=c.name||''; $('#courseShortName').value=c.shortName||''; $('#courseTeacher').value=c.teacher||''; $('#courseLocation').value=c.location||''; $('#courseClassGroup').value=c.classGroup||''; $('#courseDay').value=c.day; $('#courseSlot').value=c.slot; $('#courseWeekText').value=c.weekText||''; $('#courseOddEven').value=c.oddEven||'all'; $('#courseCategory').value=c.category||'custom'; $('#deleteCourseBtn').classList.remove('hidden'); toast(`正在编辑：${c.name}`); }
+    function clearCourseForm(){ state.editingCourse=null; $('#courseName').value=''; $('#courseShortName').value=''; $('#courseTeacher').value=''; $('#courseLocation').value=''; $('#courseClassGroup').value=''; $('#courseWeekText').value=''; $('#courseDay').value='1'; $('#courseSlot').value=String(state.slots[0]?.slot||1); $('#courseOddEven').value='all'; $('#courseCategory').value='public_required'; $('#deleteCourseBtn').classList.add('hidden'); }
+    function parseCsv(text){ const rows=text.trim().split(/\r?\n/).map(r=>r.split(/\t|,/)); if(!rows.length) return []; const headers=rows[0].map(h=>String(h).trim()); return rows.slice(1).filter(r=>r.some(Boolean)).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??'']))); }
+    function normalizeHeader(h){ return String(h||'').replace(/\s+/g,'').toLowerCase(); }
+    function pick(obj, keys){ for(const key of keys){ const found = Object.keys(obj).find(k=>normalizeHeader(k)===normalizeHeader(key)); if(found && obj[found]!==undefined && obj[found]!==null && String(obj[found]).trim()!=='') return obj[found]; } return ''; }
+    function mapDay(value){ const raw = String(value||'').replace(/\s+/g,''); const map = {'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'周一':1,'星期一':1,'周二':2,'星期二':2,'周三':3,'星期三':3,'周四':4,'星期四':4,'周五':5,'星期五':5,'周六':6,'星期六':6,'周日':7,'星期日':7,'周天':7,'星期天':7,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'日':7,'天':7}; return Number(map[raw]||raw)||0; }
+    function mapSlot(value){ const raw = String(value||'').replace(/\s+/g,''); const nums = raw.match(/\d+/g); if(!nums) return Number(raw)||0; if(/1-2/.test(raw)) return 1; if(/3-4/.test(raw)) return 2; if(/6-7/.test(raw)) return 3; if(/8-9/.test(raw)) return 4; if(/10-11/.test(raw)) return 5; if(/12-13/.test(raw)) return 6; return Number(nums[0])||0; }
+    function inferOddEven(weekText){ const t=String(weekText||''); if(t.includes('单')) return 'odd'; if(t.includes('双')) return 'even'; return 'all'; }
+    function inferCategory(text){ const t=String(text||''); if(t.includes('实验')) return 'lab'; if(t.includes('思想')||t.includes('体育')||t.includes('英语')||t.includes('形势与政策')) return 'public_required'; if(t.includes('化学')||t.includes('俄语')||t.includes('监测')||t.includes('生物')) return 'major_required'; return 'custom'; }
+    function normalizeImported(rows){ return rows.map(r=>{ const weekText = pick(r,['weekText','周次','周数','周次说明','上课周次','周别']) || '1-17周'; return ({ day:mapDay(pick(r,['day','星期','周几','星期几','星期'])), slot:mapSlot(pick(r,['slot','节次','上课节次','节','节次范围','时间段'])), name:String(pick(r,['name','课程名','课程名称','课程'])||'').replace(/[☆★▲※]/g,'').trim(), shortName:pick(r,['shortName','简称','课程简称'])||'', teacher:pick(r,['teacher','老师','教师','任课教师'])||'', location:pick(r,['location','地点','场地','教室','上课地点','教室地点'])||'', classGroup:pick(r,['classGroup','班级','上课班级'])||'', weekText, oddEven:pick(r,['oddEven','单双周']) || inferOddEven(weekText), category:pick(r,['category','分类','课程类别']) || inferCategory(pick(r,['name','课程名','课程名称','课程'])) }); }).filter(r=>r.name&&r.day&&r.slot); }
+    function isWeekdayLabel(v){ return /星期[一二三四五六日天]|周[一二三四五六日]/.test(String(v||'')); }
+    function buildSheetMatrix(sheet){
+      const ref = sheet['!ref']; if(!ref) return [];
+      const range = XLSX.utils.decode_range(ref);
+      const rows = Array.from({length: range.e.r - range.s.r + 1}, ()=>Array(range.e.c - range.s.c + 1).fill(''));
+      for(let r=range.s.r; r<=range.e.r; r++){
+        for(let c=range.s.c; c<=range.e.c; c++){
+          const addr = XLSX.utils.encode_cell({r,c});
+          const cell = sheet[addr];
+          rows[r-range.s.r][c-range.s.c] = cell && cell.v!=null ? String(cell.v) : '';
+        }
+      }
+      (sheet['!merges']||[]).forEach(m=>{
+        const top = rows[m.s.r-range.s.r]?.[m.s.c-range.s.c] || '';
+        for(let r=m.s.r; r<=m.e.r; r++) for(let c=m.s.c; c<=m.e.c; c++){
+          if(!rows[r-range.s.r][c-range.s.c]) rows[r-range.s.r][c-range.s.c] = top;
+        }
+      });
+      return rows.map(r=>r.map(v=>String(v||'').replace(/\u00a0/g,' ').trim()));
+    }
+    function detectGridSheet(rows){ return rows.some(r=>Array.isArray(r) && r.filter(isWeekdayLabel).length>=3) && rows.some(r=>Array.isArray(r) && r.some(v=>/第?\d+\s*-\s*\d+节?/.test(String(v||'')))); }
+    function findHeaderIndex(rows){ return rows.findIndex(r=>Array.isArray(r) && r.filter(isWeekdayLabel).length>=3); }
+    function findSlotColumn(rows, headerIndex){
+      const score = new Map();
+      for(let c=0;c<Math.max(...rows.map(r=>r.length),0);c++) score.set(c,0);
+      rows.slice(headerIndex+1).forEach(r=> r.forEach((v,c)=>{ if(/第?\d+\s*-\s*\d+节?/.test(String(v||''))) score.set(c,(score.get(c)||0)+1); }));
+      let bestCol=0,best=0; for(const [c,s] of score){ if(s>best){best=s; bestCol=c;} }
+      return bestCol;
+    }
+    function splitTeacherLocation(line){
+      const txt = String(line||'').trim(); if(!txt) return {teacher:'', location:''};
+      const parts = txt.split(/\s+/).filter(Boolean);
+      if(parts.length===1) return {teacher:'', location:parts[0]};
+      const last = parts[parts.length-1];
+      if(/[楼场馆室区]|\d{3,}/.test(last)) return {teacher:parts.slice(0,-1).join(' '), location:last};
+      return {teacher:parts[0], location:parts.slice(1).join(' ')};
+    }
+    function parseGridCourseCell(text, day, slot){
+      const raw = String(text||'').replace(/\r/g,'').trim(); if(!raw || /^无$/.test(raw)) return null;
+      const lines = raw.split(/\n+/).map(s=>s.trim()).filter(Boolean); if(!lines.length) return null;
+      let name = lines[0].replace(/[☆★▲※]/g,'').trim();
+      let weekText = (lines.find(x=>/(\d+\s*-\s*\d+周|\d+周)/.test(x)) || '').replace(/\s+/g,'');
+      let teacher = '', location = '';
+      const nonWeek = lines.slice(1).filter(x=>!/(\d+\s*-\s*\d+周|\d+周)/.test(x));
+      if(nonWeek.length>=2){ teacher = nonWeek[0]; location = nonWeek.slice(1).join(' '); }
+      else if(nonWeek.length===1){ const pair = splitTeacherLocation(nonWeek[0]); teacher = pair.teacher; location = pair.location; }
+      if(!weekText){
+        const joined = raw.replace(/\n/g,' ');
+        const m = joined.match(/(.+?)[☆★▲※]?\s+([^\s]+(?:\s+[^\s]+)?)\s+(\d+\s*-\s*\d+周(?:\(单\)|\(双\))?|\d+周)\s*$/);
+        if(m){ name = m[1].trim(); const pair = splitTeacherLocation(m[2]); teacher = pair.teacher; location = pair.location; weekText = m[3].replace(/\s+/g,''); }
+      }
+      if(!weekText) weekText='1-17周';
+      return {day,slot,name,teacher,location,weekText,oddEven:inferOddEven(weekText),category:inferCategory(name)};
+    }
+    function parseGridSheet(rows){
+      const headerIndex = findHeaderIndex(rows); if(headerIndex<0) return [];
+      const slotCol = findSlotColumn(rows, headerIndex);
+      const headerRow = rows[headerIndex] || [];
+      const dayCols=[];
+      headerRow.forEach((v,i)=>{ const d=mapDay(v); if(d>=1&&d<=7) dayCols.push([i,d]); });
+      const out=[];
+      for(let r=headerIndex+1; r<rows.length; r++){
+        const row=rows[r]||[]; const slot=mapSlot(row[slotCol]||row[0]); if(!slot) continue;
+        for(const [col,day] of dayCols){ const cell=String(row[col]||'').trim(); if(!cell) continue; const parsed=parseGridCourseCell(cell,day,slot); if(parsed) out.push(parsed); }
+      }
+      const uniq = new Map(); out.forEach(c=>{ const k=[c.day,c.slot,c.name,c.location,c.weekText].join('|'); if(!uniq.has(k)) uniq.set(k,c); });
+      return [...uniq.values()];
+    }
+    function rowsFromPdfText(text){ const lines = String(text||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean); const out=[]; let currentDay=1; for(const line of lines){ const dayMatch = line.match(/(周一|周二|周三|周四|周五|周六|周日|星期一|星期二|星期三|星期四|星期五|星期六|星期日)/); if(dayMatch) currentDay = mapDay(dayMatch[1]); const m = line.match(/^(\d+\s*-\s*\d+)\s+(.+?)\s*[☆★▲※]?\s+周(?:数|次)[:：]?\s*([^/]+)\/(?:地点|场地)[:：]?\s*([^/]+)\/教师[:：]?\s*(.+)$/); if(m){ const weekText = m[3].replace(/\s+/g,''); out.push({day: currentDay, slot: mapSlot(m[1]), name: m[2].replace(/[☆★▲※]/g,'').trim(), teacher: m[5].trim(), location: m[4].trim(), weekText, oddEven: inferOddEven(weekText), category: inferCategory(m[2])}); } } return out; }
+    async function parsePdfFile(file){ if(!window.pdfjsLib){ throw new Error('PDF 组件未加载完成，请稍后再试'); } const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({data:buf}).promise; let text=''; for(let i=1;i<=pdf.numPages;i++){ const page = await pdf.getPage(i); const content = await page.getTextContent(); text += content.items.map(it=>it.str).join(' ') + '\n'; } const rows = rowsFromPdfText(text); if(!rows.length) throw new Error('这个 PDF 没提取到可识别课程'); return rows; }
+    function renderAll(){ applyTheme(state.theme); applyCourseSettingsVisibility(); applyTableSize(state.tableSize); updateBottomToolbar(!!state.user); if(!state.meta) return; renderHeader(); updateTrialFeatures(); if(!state.user) return; fillSelectors(); renderWeeks(); renderTable(); renderMobile(); renderSlots(); if($('#profileName')) $('#profileName').value=state.user.name||''; $$('.mode .btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.infoMode)); updateToolbarToggleTile(); updateTableSizeTile(); updateTrialFeatures(); }
+    async function bootPublic(){ const data=await api('/api/public/bootstrap'); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); renderAll(); }
+    async function loadMe(){ const data=await api('/api/auth/me'); state.user=data.user; state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||''; if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); state.courses=data.courses; applyAccountPreferences(data.preferences||{}); renderAuthState(true); clearCourseForm(); renderAll(); rememberCurrentAccount(); syncWidgetNow('loadMe'); }
+    function resetToLoggedOut(){ state.user=null; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); renderAuthState(false); renderAll(); }
+
+    $('#showRegisterAuth') && ($('#showRegisterAuth').onclick=showRegisterPanel);
+    $('#accountAvatarBtn') && ($('#accountAvatarBtn').onclick=openAccountModal);
+    $('#showLoginAuth') && ($('#showLoginAuth').onclick=showLoginPanel);
+
+
+    function getSavedAccounts(){
+      try{
+        const raw=JSON.parse(localStorage.getItem('xiaodeSavedAccounts')||'[]');
+        const byUser=new Map();
+        raw.filter(x=>x&&x.username&&(x.token||x.switchKey)).forEach(x=>{
+          const old=byUser.get(x.username)||{};
+          byUser.set(x.username,{...old,...x});
+        });
+        return [...byUser.values()];
+      }catch{return []}
+    }
+    function setSavedAccounts(list){localStorage.setItem('xiaodeSavedAccounts', JSON.stringify(list.slice(0,12)));}
+    function rememberCurrentAccount(){
+      if(!state.user||!state.token) return;
+      const switchKey = state.switchKey || state.user.switchKey || '';
+      const list=getSavedAccounts().filter(x=>x.username!==state.user.username);
+      list.unshift({name:state.user.name||state.user.username, username:state.user.username, token:state.token, switchKey, preferences:currentPreferenceSnapshot(), savedAt:new Date().toISOString()});
+      setSavedAccounts(list);
+    }
+    async function loginAndLoad(username,password){
+      const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:String(username||'').trim(),password})});
+      state.token=r.token;
+      state.switchKey=r.switchKey||r.user?.switchKey||'';
+      localStorage.setItem('courseTableUserToken',state.token);
+      if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
+      await loadMe();
+      return r;
+    }
+    function openAccountReloginModal(acc){
+      openModal('重新验证账号', `
+        <div class="detail">这个账号的旧登录状态已经过期，只需要输入一次小德课表密码；验证后，下次就可以继续一键切换。</div>
+        <div class="row"><label>账号</label><input id="quickSwitchUsername" value="${escapeHtml(acc.username||'')}" autocomplete="username" /></div>
+        <div class="row"><label>密码</label><input id="quickSwitchPassword" type="password" placeholder="输入这个账号的小德课表密码" autocomplete="current-password" /></div>
+        <div class="inline"><button class="btn primary" id="quickReloginBtn" type="button">验证并切换</button><button class="btn ghost" id="quickReloginCancelBtn" type="button">取消</button></div>
+      `);
+      $('#quickReloginCancelBtn') && ($('#quickReloginCancelBtn').onclick=openAccountModal);
+      $('#quickReloginBtn') && ($('#quickReloginBtn').onclick=async()=>{
+        const btn=$('#quickReloginBtn');
+        try{
+          btn.disabled=true; btn.textContent='切换中…';
+          await loginAndLoad($('#quickSwitchUsername').value.trim(), $('#quickSwitchPassword').value);
+          closeModal();
+          toast('已切换到 '+(state.user?.name||state.user?.username||acc.username));
+        }catch(e){
+          btn.disabled=false; btn.textContent='验证并切换';
+          toast(e.message||'验证失败');
+        }
+      });
+      setTimeout(()=>$('#quickSwitchPassword')?.focus(),80);
+    }
+    async function switchToSavedAccount(acc, btn){
+      const previousToken=state.token;
+      const previousSwitchKey=state.switchKey;
+      const originalText=btn?.textContent||'切换';
+      if(btn){ btn.disabled=true; btn.textContent='切换中…'; }
+      let tokenError=null;
+      try{
+        if(acc.token){
+          state.token=acc.token;
+          state.switchKey=acc.switchKey||'';
+          localStorage.setItem('courseTableUserToken',state.token);
+          if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
+          await loadMe();
+          closeModal();
+          toast('已切换到 '+(state.user?.name||acc.name||acc.username));
+          return;
+        }
+      }catch(e){
+        tokenError=e;
+      }
+      try{
+        if(acc.switchKey){
+          const r=await api('/api/auth/quick-switch',{method:'POST',body:JSON.stringify({username:acc.username,switchKey:acc.switchKey})});
+          state.token=r.token;
+          state.switchKey=r.switchKey||acc.switchKey||'';
+          localStorage.setItem('courseTableUserToken',state.token);
+          if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
+          await loadMe();
+          closeModal();
+          toast('已切换到 '+(state.user?.name||acc.name||acc.username));
+          return;
+        }
+      }catch(e){
+        tokenError=e;
+      }
+      state.token=previousToken;
+      state.switchKey=previousSwitchKey;
+      if(previousToken) localStorage.setItem('courseTableUserToken',previousToken); else localStorage.removeItem('courseTableUserToken');
+      if(previousSwitchKey) localStorage.setItem('xiaodeCurrentSwitchKey',previousSwitchKey); else localStorage.removeItem('xiaodeCurrentSwitchKey');
+      if(btn){ btn.disabled=false; btn.textContent=originalText; }
+      if(tokenError && /请先登录|过期|401|登录状态/i.test(String(tokenError.message||tokenError))){
+        toast('这个账号需要重新验证一次');
+        return openAccountReloginModal(acc);
+      }
+      toast(tokenError?.message||'切换失败');
+    }
+    
+    function removeSavedAccount(username){ setSavedAccounts(getSavedAccounts().filter(x=>x.username!==username)); }
+    function openRenameAccountModal(){
+      const oldUsername=state.user?.username||'';
+      openModal('重命名账号', `
+        <div class="detail">这里只修改小德课表里的显示姓名/用户名，不会影响教务系统账号。</div>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="row"><label>显示姓名</label><input id="renameAccountName" value="${escapeHtml(state.user?.name||'')}" /></div>
+          <div class="row"><label>用户名</label><input id="renameAccountUsername" value="${escapeHtml(state.user?.username||'')}" /></div>
+        </div>
+        <div class="inline"><button class="btn primary" id="confirmRenameAccountBtn">保存修改</button><button class="btn ghost" id="cancelRenameAccountBtn">取消</button></div>
+      `);
+      $('#cancelRenameAccountBtn') && ($('#cancelRenameAccountBtn').onclick=openAccountModal);
+      $('#confirmRenameAccountBtn') && ($('#confirmRenameAccountBtn').onclick=async()=>{
+        try{
+          const name=$('#renameAccountName').value.trim();
+          const username=$('#renameAccountUsername').value.trim();
+          const r=await api('/api/my/profile',{method:'PUT',body:JSON.stringify({name,username})});
+          state.user={...state.user,...r.user};
+          if(oldUsername && oldUsername!==state.user.username) removeSavedAccount(oldUsername);
+          rememberCurrentAccount();
+          renderAll();
+          toast('账号信息已更新');
+          openAccountModal();
+        }catch(e){ toast(e.message||'修改失败'); }
+      });
+    }
+    function openDeleteAccountModal(){
+      if(!state.user) return;
+      openModal('删除当前账号', `
+        <div class="detail"><b>危险操作</b><br>会删除当前账号、当前账号课程和当前账号相关登录状态；不会影响其他账号。建议先做一次备份。</div>
+        <div class="row" style="margin-top:14px"><label>输入当前账号密码确认删除</label><input id="deleteAccountPassword" type="password" placeholder="小德课表密码" /></div>
+        <div class="inline"><button class="btn danger" id="confirmDeleteAccountBtn">确认删除账号</button><button class="btn ghost" id="cancelDeleteAccountBtn">取消</button></div>
+      `);
+      $('#cancelDeleteAccountBtn') && ($('#cancelDeleteAccountBtn').onclick=openAccountModal);
+      $('#confirmDeleteAccountBtn') && ($('#confirmDeleteAccountBtn').onclick=async()=>{
+        if(!confirm('真的删除当前账号吗？这个操作不能撤销。')) return;
+        try{
+          const username=state.user.username;
+          await api('/api/my/account',{method:'DELETE',body:JSON.stringify({password:$('#deleteAccountPassword').value})});
+          removeSavedAccount(username);
+          state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey');
+          closeModal(); resetToLoggedOut(); showLoginPanel(); toast('当前账号已删除');
+        }catch(e){ toast(e.message||'删除失败'); }
+      });
+    }
+
+    function openAccountModal(){
+      rememberCurrentAccount();
+      const accounts=getSavedAccounts().filter(a=>!state.user || a.username!==state.user.username);
+      const current=state.user?`<div class="account-item"><div class="avatar-dot">${escapeHtml((state.user.name||state.user.username||'我').slice(0,1))}</div><div style="flex:1"><b>${escapeHtml(state.user.name||'当前账号')}</b><small>${escapeHtml(state.user.username||'')} · 当前账号</small></div><button class="btn ghost" id="renameCurrentAccountBtn" type="button">重命名</button><button class="btn danger" id="deleteCurrentAccountBtn" type="button">删除</button></div>`:'';
+      const list=accounts.length?accounts.map((a,i)=>`<div class="account-item"><div class="avatar-dot">${escapeHtml((a.name||a.username||'账').slice(0,1))}</div><div style="flex:1"><b>${escapeHtml(a.name||a.username)}</b><small>${escapeHtml(a.username)} · ${new Date(a.savedAt||Date.now()).toLocaleDateString()}</small></div><button class="btn ghost switch-account-btn" data-username="${escapeHtml(a.username)}">切换</button></div>`).join(''):'<div class="detail">还没有保存其他账号。点“增加账号”后登录新账号，就能在这里快速切换。</div>';
+      openModal('账号管理', `
+        <div class="account-list">${current}${list}</div>
+        <div class="inline" style="margin-top:14px">
+          <button class="btn primary" id="addAccountBtn" type="button">增加账号</button>
+          <button class="btn ghost" id="switchAccountRefreshBtn" type="button">刷新当前账号</button>
+          <button class="btn danger" id="forgetSavedAccountsBtn" type="button">清除本机保存的切换记录</button>
+        </div>
+        <div class="detail" style="margin-top:12px">退出登录只会退出当前界面，不会让已保存账号失效；清除本机记录后才会移除快速切换。</div>
+      `);
+      setTimeout(()=>{
+        $$('.switch-account-btn').forEach(btn=>btn.onclick=async()=>{
+          const acc=getSavedAccounts().find(x=>x.username===btn.dataset.username);
+          if(!acc) return toast('账号记录不存在');
+          await switchToSavedAccount(acc, btn);
+        });
+        $('#renameCurrentAccountBtn') && ($('#renameCurrentAccountBtn').onclick=openRenameAccountModal);
+        $('#deleteCurrentAccountBtn') && ($('#deleteCurrentAccountBtn').onclick=openDeleteAccountModal);
+        $('#addAccountBtn') && ($('#addAccountBtn').onclick=()=>{ rememberCurrentAccount(); state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); closeModal(); resetToLoggedOut(); showLoginPanel(); toast('请登录要添加的账号'); window.scrollTo({top:0,behavior:'smooth'}); });
+        $('#switchAccountRefreshBtn') && ($('#switchAccountRefreshBtn').onclick=async()=>{ try{await loadMe(); toast('当前账号已刷新')}catch(e){toast(e.message)} });
+        $('#forgetSavedAccountsBtn') && ($('#forgetSavedAccountsBtn').onclick=()=>{ if(confirm('只清除本机保存的快速切换记录，不删除账号。确定？')){ setSavedAccounts([]); closeModal(); toast('已清除切换记录'); }});
+      },50);
+    }
+    function openManageCenter(){
+      const panel=$('#featureDetailPanel');
+      if(!panel) return openManagePanel('course');
+      const drawer=$('#drawer');
+      Array.from(panel.children).forEach(child=>{ if(child!==drawer) child.remove(); });
+      if(drawer) drawer.classList.add('hidden');
+      const menu=document.createElement('div');
+      menu.id='manageMenu';
+      menu.innerHTML=`
+        <h3>管理</h3>
+        <div class="quick-grid">
+          <button class="feature-tile primary-tile" id="openCourseManageBtn"><span>✎</span><b>课程编辑</b></button>
+          <button class="feature-tile" id="openSlotInfoBtn"><span>⏱</span><b>节次时间</b></button>
+        </div>
+      `;
+      panel.prepend(menu);
+      panel.classList.remove('hidden');
+      $('#openCourseManageBtn') && ($('#openCourseManageBtn').onclick=()=>openManagePanel('course'));
+      $('#openSlotInfoBtn') && ($('#openSlotInfoBtn').onclick=()=>openManagePanel('slot'));
+      panel.scrollIntoView({behavior:'smooth', block:'nearest'});
+    }
+    async function openQuickJwxtImport(){
+      syncAndroidImportUi();
+      if(hasAndroidBridge()){
+        await createAndroidImportCode();
+        return;
+      }
+      openModal('教务系统导入', `
+        <div class="quick-grid">
+          <button class="feature-tile primary-tile" id="quickCreateImportBtn"><span>⇩</span><b>生成导入码</b></button>
+          <button class="feature-tile" id="quickCopyServerBtn"><span>⧉</span><b>复制服务器</b></button>
+        </div>
+        <div class="detail" style="margin-top:12px">手机 App 内会直接切到网页登录导入；网页端可以生成导入码并复制服务器地址。</div>
+      `);
+      $('#quickCreateImportBtn') && ($('#quickCreateImportBtn').onclick=async()=>{
+        await createAndroidImportCode();
+        if(latestAndroidImportCode){
+          $('#modalBody').innerHTML=`<div class="detail" style="font-size:30px;font-weight:900;text-align:center;letter-spacing:3px">${escapeHtml(latestAndroidImportCode)}</div><div class="inline"><button class="btn primary" id="quickCopyImportCodeBtn">复制导入码</button></div>`;
+          $('#quickCopyImportCodeBtn') && ($('#quickCopyImportCodeBtn').onclick=copyImportCode);
+        }
+      });
+      $('#quickCopyServerBtn') && ($('#quickCopyServerBtn').onclick=copyServerUrl);
+    }
+    function openFeatureHub(options={}){
+      const hub=$('#featureHub');
+      if(!hub) return;
+      hub.classList.remove('hidden','collapsed');
+      updateToolbarToggleTile();
+      const shouldScroll=options.scroll!==false;
+      if(shouldScroll) setTimeout(()=>hub.scrollIntoView({behavior:'smooth',block:'start'}),40);
+    }
+    function openManagePanel(target){
+      const drawer=$('#drawer');
+      const body=$('#modalBody');
+      if(!drawer || !body) return;
+      if(!state.drawerPlaceholder && drawer.parentNode){
+        state.drawerPlaceholder=document.createComment('drawer-placeholder');
+        drawer.parentNode.insertBefore(state.drawerPlaceholder, drawer);
+      }
+      openModal(target==='slot'?'课表时间':'编辑课程','<div id="drawerModalMount"></div>');
+      const mount=$('#drawerModalMount');
+      mount.appendChild(drawer);
+      drawer.classList.remove('hidden','manage-course-only','manage-slot-only');
+      drawer.classList.add(target==='slot'?'manage-slot-only':'manage-course-only');
+      renderSlots();
+      fillSelectors();
+      if(target==='course') toast('点已有课程可编辑，点空白格可快速添加');
+    }
+    function localBackupPreferences(){
+      return currentPreferenceSnapshot();
+    }
+    
+    function backupDateStamp(){
+      const d=new Date();
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+    }
+    function backupCoursesOf(backup){
+      return Array.isArray(backup?.courses)?backup.courses:(Array.isArray(backup?.data?.courses)?backup.data.courses:[]);
+    }
+    function backupSlotsOf(backup){
+      return Array.isArray(backup?.slots)?backup.slots:(Array.isArray(backup?.data?.slots)?backup.data.slots:[]);
+    }
+    function downloadTextFile(content, filename, mime='text/plain;charset=utf-8'){
+      const blob=new Blob([content],{type:mime});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download=filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    function downloadJson(data, filename){ downloadTextFile(JSON.stringify(data,null,2), filename, 'application/json;charset=utf-8'); }
+    async function shareOrDownloadText(content, filename, mime='application/json;charset=utf-8', title='小德课表'){
+      if(window.XiaoDeAndroid && typeof window.XiaoDeAndroid.shareTextFile==='function'){
+        window.XiaoDeAndroid.shareTextFile(filename, content, mime); return 'shared';
+      }
+      try{
+        const file=new File([content], filename, {type:mime});
+        if(navigator.canShare && navigator.canShare({files:[file]})){
+          await navigator.share({title, text:'来自小德课表的课表文件', files:[file]}); return 'shared';
+        }
+      }catch(e){ console.warn(e); }
+      downloadTextFile(content, filename, mime); return 'downloaded';
+    }
+    async function exportCourseBackup(){
+      try{
+        const r=await api('/api/my/backup');
+        const backup={...(r.backup||{}), preferences:localBackupPreferences(), exportedBy:'xiaode-course-table-web-v39'};
+        const filename=`小德课表备份_${backupDateStamp()}.json`;
+        const text=JSON.stringify(backup,null,2);
+        const mode=await shareOrDownloadText(text, filename, 'application/json;charset=utf-8', '小德课表备份');
+        toast(`${mode==='shared'?'已调起系统保存/分享':'已导出'} ${backupCoursesOf(backup).length} 门课程的备份`);
+      }catch(e){ toast(e.message||'导出失败'); }
+    }
+    function applyBackupPreferences(backup={}){
+      const pref=backup.preferences||backup.clientPreferences||{};
+      if(pref.theme) applyTheme(pref.theme);
+      if(pref.infoMode) state.infoMode=pref.infoMode;
+      if(typeof pref.bottomToolbarHidden==='boolean'){
+        state.bottomToolbarHidden=!!pref.bottomToolbarHidden;
+        localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+        updateBottomToolbar(!!state.user);
+      }
+      if(pref.tableSize) applyTableSize(pref.tableSize,{width:pref.tableDayWidth,height:pref.tableRowHeight});
+      if(typeof pref.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!pref.hideFifthSlot; localStorage.setItem('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
+      if(pref.courseSettings){ saveCourseSettings(pref.courseSettings); }
+      if(pref.reminderSettings){ saveReminderSettings(pref.reminderSettings); }
+      schedulePreferenceSave();
+    }
+    function backupSummaryHtml(backup={}){
+      const courses=backupCoursesOf(backup);
+      const slots=backupSlotsOf(backup);
+      const user=backup.user||{};
+      const exportedAt=backup.exportedAt?new Date(backup.exportedAt).toLocaleString():'未知时间';
+      return `<div class="detail">
+        <b>备份内容</b><br>
+        课程：${courses.length} 门<br>
+        节次时间：${slots.length?slots.length+' 条':'未包含'}<br>
+        来源账号：${escapeHtml(user.name||user.username||'未写入')}<br>
+        导出时间：${escapeHtml(exportedAt)}<br>
+        版本：${escapeHtml(backup.appVersion||'未知')}
+      </div>`;
+    }
+    async function restoreBackupToCurrent(backup, mode){
+      const replace=mode==='replace';
+      const text=replace?'覆盖当前账号课表？当前课程会被备份文件替换。':'合并到当前账号？备份课程会追加进当前课表。';
+      if(!confirm(text)) return;
+      try{
+        const r=await api('/api/my/restore',{method:'POST',body:JSON.stringify({backup,mode})});
+        applyBackupPreferences(backup);
+        await loadMe();
+        closeModal();
+        toast(`${replace?'已覆盖恢复':'已合并恢复'} ${r.count||0} 门课程`);
+      }catch(e){ toast(e.message||'恢复失败'); }
+    }
+    function openRestoreAsNewAccount(backup){
+      openModal('作为新账号导入', `
+        ${backupSummaryHtml(backup)}
+        <div class="detail" style="margin-top:12px">会先创建一个新账号，再把备份里的课程和节次时间导入进去；原账号不会被修改。</div>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="row"><label>姓名</label><input id="backupNewName" value="${escapeHtml((backup.user&&backup.user.name)||'新课表')}" /></div>
+          <div class="row"><label>用户名</label><input id="backupNewUsername" placeholder="例如：roommate01" /></div>
+          <div class="row"><label>密码</label><input id="backupNewPassword" type="password" placeholder="至少 4 位" /></div>
+        </div>
+        <div class="inline"><button class="btn primary" id="confirmNewAccountRestoreBtn">创建账号并导入</button></div>
+      `);
+      setTimeout(()=>{
+        $('#confirmNewAccountRestoreBtn') && ($('#confirmNewAccountRestoreBtn').onclick=async()=>{
+          const name=$('#backupNewName').value.trim();
+          const username=$('#backupNewUsername').value.trim();
+          const password=$('#backupNewPassword').value;
+          if(!name||!username||password.length<4) return toast('姓名、用户名和至少 4 位密码必填');
+          try{
+            const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name,username,password})});
+            state.token=r.token; localStorage.setItem('courseTableUserToken',state.token);
+            await api('/api/my/restore',{method:'POST',body:JSON.stringify({backup,mode:'replace'})});
+            applyBackupPreferences(backup);
+            await loadMe();
+            closeModal();
+            toast('已创建新账号并导入备份');
+          }catch(e){ toast(e.message||'新账号导入失败'); }
+        });
+      },50);
+    }
+    function showRestoreBackupModal(backup){
+      if(!backup || typeof backup!=='object') return toast('备份文件格式不正确');
+      const courses=backupCoursesOf(backup);
+      const slots=backupSlotsOf(backup);
+      if(!courses.length && !slots.length) return toast('备份文件里没有可恢复的数据');
+      openModal('恢复课表备份', `
+        ${backupSummaryHtml(backup)}
+        <div class="inline" style="margin-top:14px">
+          <button class="btn primary" id="restoreReplaceBtn">覆盖当前课表</button>
+          <button class="btn ghost" id="restoreMergeBtn">合并到当前课表</button>
+          <button class="btn ghost" id="restoreNewAccountBtn">作为新账号导入</button>
+        </div>
+        <div class="detail" style="margin-top:12px">建议优先用“作为新账号导入”或先导出当前备份，再进行覆盖恢复。</div>
+      `);
+      setTimeout(()=>{
+        $('#restoreReplaceBtn') && ($('#restoreReplaceBtn').onclick=()=>restoreBackupToCurrent(backup,'replace'));
+        $('#restoreMergeBtn') && ($('#restoreMergeBtn').onclick=()=>restoreBackupToCurrent(backup,'merge'));
+        $('#restoreNewAccountBtn') && ($('#restoreNewAccountBtn').onclick=()=>openRestoreAsNewAccount(backup));
+      },50);
+    }
+    async function readBackupFile(file){
+      if(!file) return;
+      try{
+        const text=await file.text();
+        const backup=JSON.parse(text);
+        showRestoreBackupModal(backup);
+      }catch(e){ toast('备份文件读取失败，请确认是小德课表导出的 JSON'); }
+    }
+    function openResetDataModal(){
+      openModal('重置当前账号数据', `
+        <div class="detail"><b>危险操作</b><br>这里只会影响当前登录账号，不会删除账号本身，也不会影响其他同学账号。</div>
+        <div class="inline" style="margin-top:14px">
+          <button class="btn danger" id="resetOnlyCoursesBtn">只清空课程</button>
+          <button class="btn danger" id="resetCoursesAndSlotsBtn">清空课程并恢复默认节次</button>
+        </div>
+      `);
+      setTimeout(()=>{
+        $('#resetOnlyCoursesBtn') && ($('#resetOnlyCoursesBtn').onclick=async()=>{
+          if(!confirm('确定清空当前账号的所有课程吗？这个操作不能撤销。')) return;
+          try{ const r=await api('/api/my/reset',{method:'POST',body:JSON.stringify({resetSlots:false})}); await loadMe(); closeModal(); toast(`已清空 ${r.count||0} 门课程`); }catch(e){ toast(e.message||'重置失败'); }
+        });
+        $('#resetCoursesAndSlotsBtn') && ($('#resetCoursesAndSlotsBtn').onclick=async()=>{
+          if(!confirm('确定清空课程并恢复默认节次时间吗？这个操作不能撤销。')) return;
+          try{ const r=await api('/api/my/reset',{method:'POST',body:JSON.stringify({resetSlots:true})}); await loadMe(); closeModal(); toast(`已清空 ${r.count||0} 门课程，并恢复默认节次`); }catch(e){ toast(e.message||'重置失败'); }
+        });
+      },50);
+    }
+    function openBackupPanel(){
+      openModal('备份与恢复', `
+        <div class="quick-grid">
+          <button class="feature-tile primary-tile" id="exportBackupBtn"><span>⇧</span><b>一键备份</b></button>
+          <button class="feature-tile" id="importBackupBtn"><span>⇩</span><b>导入恢复</b></button>
+          <button class="feature-tile" id="resetDataBtn"><span>!</span><b>重置数据</b></button>
+        </div>
+        <input id="backupFileInput" type="file" accept="application/json,.json" class="hidden" />
+        <div class="detail" style="margin-top:12px">一键备份会保存当前账号的课程、节次时间、配色、课表尺寸和工具栏偏好；恢复时可选择覆盖、合并或作为新账号导入。</div>
+      `);
+      $('#exportBackupBtn') && ($('#exportBackupBtn').onclick=exportCourseBackup);
+      $('#importBackupBtn') && ($('#importBackupBtn').onclick=()=>$('#backupFileInput')?.click());
+      $('#backupFileInput') && ($('#backupFileInput').onchange=e=>readBackupFile(e.target.files[0]));
+      $('#resetDataBtn') && ($('#resetDataBtn').onclick=openResetDataModal);
+    }
+
+    function openScheduleSettingsModal(){
+      const meta=effectiveMeta();
+      const st=state.courseSettings||DEFAULT_COURSE_SETTINGS;
+      openModal('课表设置', `
+        <div class="form-grid">
+          <div class="row"><label>一共多少周</label><input id="settingTotalWeeks" type="number" min="1" max="40" value="${escapeHtml(st.totalWeeks||meta.totalWeeks||17)}" /></div>
+          <div class="row"><label>每周开始日</label><select id="settingWeekStartDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${Number(st.weekStartDay||1)===i+1?'selected':''}>${d}</option>`).join('')}</select></div>
+          <div class="row"><label>开学日期</label><input id="settingTermStart" type="date" value="${escapeHtml(st.termStart||meta.termStart||'')}" /></div>
+        </div>
+        <div class="secondary-note">调整开学日期后，当前第几周会按新日期重新计算；这些设置保存在本机并进入备份文件。</div>
+        <div class="style-switch-grid" style="margin-top:14px">
+          <div class="style-row"><div>是否需要教室模块<small>关闭后课程格子和编辑界面不突出教室。</small></div><button class="btn ghost" id="settingShowLocation">${st.showLocation?'开启':'关闭'}</button></div>
+          <div class="style-row"><div>是否需要教师模块<small>关闭后完整模式里不显示老师。</small></div><button class="btn ghost" id="settingShowTeacher">${st.showTeacher?'开启':'关闭'}</button></div>
+          <div class="style-row"><div>是否需要班级模块<small>开启后编辑课程可填写班级，课表可显示。</small></div><button class="btn ghost" id="settingShowClassGroup">${st.showClassGroup?'开启':'关闭'}</button></div>
+          <div class="style-row"><div>是否需要自定义时间<small>开启后继续使用“课表时间”里的 12 节时间。</small></div><button class="btn ghost" id="settingCustomTime">${st.customTime?'开启':'关闭'}</button></div>
+        </div>
+        <div class="inline modal-actions-sticky"><button class="btn primary" id="saveScheduleSettingsBtn" type="button">确定</button></div>
+      `);
+      const temp={...st};
+      const bindToggle=(id,key)=>{ const btn=$('#'+id); if(!btn) return; btn.onclick=()=>{ temp[key]=!temp[key]; btn.textContent=temp[key]?'开启':'关闭'; }; };
+      bindToggle('settingShowLocation','showLocation'); bindToggle('settingShowTeacher','showTeacher'); bindToggle('settingShowClassGroup','showClassGroup'); bindToggle('settingCustomTime','customTime');
+      $('#saveScheduleSettingsBtn') && ($('#saveScheduleSettingsBtn').onclick=()=>{
+        saveCourseSettings({
+          ...temp,
+          totalWeeks: ($('#settingTotalWeeks')?.value||'').trim(),
+          weekStartDay: ($('#settingWeekStartDay')?.value||'1'),
+          termStart: ($('#settingTermStart')?.value||'').trim()
+        });
+        renderAll(); closeModal(); toast('课表设置已保存');
+      });
+    }
+    function openTableStylePanel(){
+      openModal('课表样式', `
+        <div class="style-switch-grid">
+          <div class="style-row"><div>课程显示全称<small>关闭后更适合截图，课程名会自动省略。</small></div><button class="btn ghost" id="toggleInfoModeBtn">${state.infoMode==='full'?'关闭':'开启'}</button></div>
+          <div class="style-row"><div>显示第5节<small>有些学校中午没有第5节，隐藏后课表更紧凑。</small></div><button class="btn ghost" id="toggleFifthBtn">${state.hideFifthSlot?'显示':'隐藏'}</button></div>
+          <div class="style-row"><div>底部工具栏<small>隐藏后截图和浏览更干净，可在这里恢复。</small></div><button class="btn ghost" id="toggleToolbarStyleBtn">${state.bottomToolbarHidden?'显示':'隐藏'}</button></div>
+        </div>
+      `);
+      $('#toggleInfoModeBtn') && ($('#toggleInfoModeBtn').onclick=()=>{ state.infoMode=state.infoMode==='full'?'compact':'full'; renderAll(); closeModal(); toast(state.infoMode==='full'?'已显示完整信息':'已切换为简洁信息'); });
+      $('#toggleFifthBtn') && ($('#toggleFifthBtn').onclick=()=>{ setHideFifthSlot(!state.hideFifthSlot); closeModal(); });
+      $('#toggleToolbarStyleBtn') && ($('#toggleToolbarStyleBtn').onclick=()=>{ setBottomToolbarHidden(!state.bottomToolbarHidden); closeModal(); });
+    }
+    function openThemePanel(){
+      const themes=[['morandi','莫兰迪1'],['minimal','极简主义'],['lavender','莫兰迪2'],['latte','莫兰迪3'],['sakura','樱花晨雾'],['matcha','抹茶拿铁'],['aurora','极光薄荷'],['sunset','落日晚霞'],['ocean','清爽海盐'],['night','夜间柔光']];
+      openModal('一键配色', `<div class="theme-grid-modal">${themes.map(t=>`<button class="theme-btn" data-theme="${t[0]}">${t[1]}<div class="theme-swatch"><i style="background:var(--head1)"></i><i style="background:var(--head2)"></i><i style="background:var(--accent2)"></i></div></button>`).join('')}</div>`);
+      $$('#modalBody .theme-btn').forEach(b=>b.onclick=()=>{applyTheme(b.dataset.theme); renderAll(); schedulePreferenceSave(); toast('已切换配色：'+b.textContent.trim());});
+    }
+    async function shareCourseFile(){
+      try{
+        const r=await api('/api/my/backup');
+        const backup={...(r.backup||{}), preferences:localBackupPreferences(), exportedBy:'xiaode-course-table-web-v39'};
+        const filename=`小德课表_${state.user?.name||'我的课表'}_${backupDateStamp()}.json`;
+        const text=JSON.stringify(backup,null,2);
+        const mode=await shareOrDownloadText(text, filename, 'application/json;charset=utf-8', '小德课表');
+        toast(mode==='shared'?'已调起系统分享':'已保存课表文件');
+      }catch(e){ toast(e.message||'分享失败'); }
+    }
+    function icsEscape(text=''){ return String(text||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n'); }
+    function icsDate(date, time){ const d=new Date(date); const [h,m]=String(time||'00:00').split(':').map(Number); d.setHours(h||0,m||0,0,0); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`; }
+    function buildCalendarIcs(scope='week'){
+      const weeks=scope==='all'?Array.from({length:totalWeeks()},(_,i)=>i+1):[getSelectedWeek()];
+      const settings=loadReminderSettings();
+      const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//XiaoDe Course Table//CN','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
+      weeks.forEach(w=>{
+        coursesForWeek(w).forEach(c=>{
+          const dayDate=weekDateObject(c.day,w);
+          if(!dayDate) return;
+          const slot=getSlot(c.slot);
+          lines.push('BEGIN:VEVENT');
+          lines.push(`UID:${icsEscape(c.id||Math.random())}-${w}@xiaode-course-table`);
+          lines.push(`DTSTAMP:${icsDate(new Date(),'00:00')}`);
+          lines.push(`DTSTART:${icsDate(dayDate,slot.start)}`);
+          lines.push(`DTEND:${icsDate(dayDate,slot.end)}`);
+          lines.push(`SUMMARY:${icsEscape(c.shortName||c.name||'课程')}`);
+          if(c.location) lines.push(`LOCATION:${icsEscape(c.location)}`);
+          const desc=[c.name&&`课程：${c.name}`,c.shortName&&`简称：${c.shortName}`,c.teacher&&`老师：${c.teacher}`,c.classGroup&&`班级：${c.classGroup}`,c.weekText&&`周次：${c.weekText}`].filter(Boolean).join('\n');
+          if(desc) lines.push(`DESCRIPTION:${icsEscape(desc)}`);
+          if(settings.startEnabled) lines.push('BEGIN:VALARM',`TRIGGER:-PT${Number(settings.startOffset||10)}M`,'ACTION:DISPLAY',`DESCRIPTION:${icsEscape(c.shortName||c.name||'课程提醒')}`,'END:VALARM');
+          lines.push('END:VEVENT');
+        });
+      });
+      lines.push('END:VCALENDAR');
+      return lines.join('\r\n');
+    }
+    async function exportCalendar(scope='week'){
+      try{
+        const ics=buildCalendarIcs(scope);
+        const filename=`小德课表日历_${scope==='all'?'全学期':'第'+getSelectedWeek()+'周'}_${backupDateStamp()}.ics`;
+        const mode=await shareOrDownloadText(ics, filename, 'text/calendar;charset=utf-8', '小德课表日历');
+        toast(mode==='shared'?'已调起系统分享/日历导入':'已导出日历文件');
+      }catch(e){ toast(e.message||'日历导出失败'); }
+    }
+    const DEFAULT_REMINDER_SETTINGS={startEnabled:true,startOffset:10,endEnabled:true,endOffset:0,calendarId:'',calendarName:''};
+    function loadReminderSettings(){
+      try{return {...DEFAULT_REMINDER_SETTINGS,...JSON.parse(localStorage.getItem('xiaodeReminderSettings')||'{}')}}catch(_){return {...DEFAULT_REMINDER_SETTINGS}}
+    }
+    function saveReminderSettings(next){
+      const merged={...loadReminderSettings(),...(next||{})};
+      merged.startOffset=Number(merged.startOffset||0); merged.endOffset=Number(merged.endOffset||0);
+      localStorage.setItem('xiaodeReminderSettings', JSON.stringify(merged));
+      schedulePreferenceSave();
+      return merged;
+    }
+    function hasAndroidCalendarBridge(){
+      return !!(window.XiaoDeAndroid && typeof window.XiaoDeAndroid.hasCalendarPermission==='function' && typeof window.XiaoDeAndroid.requestCalendarPermission==='function' && typeof window.XiaoDeAndroid.listCalendars==='function' && typeof window.XiaoDeAndroid.syncCourseReminders==='function');
+    }
+    function androidCalendarGranted(){
+      try{return !!(hasAndroidCalendarBridge() && window.XiaoDeAndroid.hasCalendarPermission())}catch(_){return false}
+    }
+    function readAndroidCalendars(){
+      if(!hasAndroidCalendarBridge()) return {ok:false,calendars:[],message:'当前不是 Android App 环境'};
+      try{
+        const raw=window.XiaoDeAndroid.listCalendars();
+        return JSON.parse(raw||'{}');
+      }catch(e){return {ok:false,calendars:[],message:e.message||'读取日历失败'}}
+    }
+    function pad2(n){return String(n).padStart(2,'0')}
+    function dateTimeMs(date,time){ const d=new Date(date); const [h,m]=String(time||'00:00').split(':').map(Number); d.setHours(h||0,m||0,0,0); return d.getTime(); }
+    function formatDateTime(ms){ const d=new Date(Number(ms)); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`; }
+    function formatTime(ms){ const d=new Date(Number(ms)); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+    function buildReminderEvents(settings=loadReminderSettings()){
+      const events=[];
+      const markerBase=(state.user?.username||state.user?.name||'me').replace(/[^\w\u4e00-\u9fa5-]/g,'_');
+      for(let w=1;w<=totalWeeks();w++){
+        coursesForWeek(w).forEach(c=>{
+          const dayDate=weekDateObject(c.day,w); if(!dayDate) return;
+          const slot=getSlot(c.slot);
+          const startMs=dateTimeMs(dayDate,slot.start), endMs=dateTimeMs(dayDate,slot.end);
+          if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs) return;
+          const titleBase=c.shortName||c.name||'课程';
+          const location=c.location||'';
+          const common=[`课程：${c.name||titleBase}`,c.teacher&&`老师：${c.teacher}`,location&&`地点：${location}`,`周次：第 ${w} 周`,`${DAYS[Number(c.day||1)-1]||''} · ${slot.label||c.slot}`].filter(Boolean).join('\n');
+          if(settings.startEnabled){
+            const off=Number(settings.startOffset||0);
+            const remindMs=startMs-off*60000;
+            events.push({
+              type:'start',title:`${titleBase} 上课提醒`,courseName:titleBase,location,week:w,day:Number(c.day||1),slot:Number(c.slot||1),
+              startMs,endMs,remindMs,alarmMinutes:Math.max(0,off),fingerprint:`${markerBase}-${c.id||titleBase}-${w}-start`,
+              description:`${common}\n${off>0?`${off} 分钟后上课`:'现在上课'}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-start`
+            });
+          }
+          if(settings.endEnabled){
+            const off=Number(settings.endOffset||0);
+            const remindMs=endMs-off*60000;
+            events.push({
+              type:'end',title:`${titleBase} 下课提醒`,courseName:titleBase,location,week:w,day:Number(c.day||1),slot:Number(c.slot||1),
+              startMs:remindMs,endMs:remindMs+5*60000,remindMs,alarmMinutes:0,fingerprint:`${markerBase}-${c.id||titleBase}-${w}-end`,
+              description:`${common}\n${off>0?`${off} 分钟后下课`:'现在下课'}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-end`
+            });
+          }
+        });
+      }
+      return events.sort((a,b)=>a.remindMs-b.remindMs);
+    }
+    function renderReminderPreview(settings=loadReminderSettings()){
+      const now=Date.now();
+      const events=buildReminderEvents(settings).filter(e=>e.remindMs>=now-10*60000).slice(0,6);
+      if(!events.length) return '<div class="detail">当前设置下没有可预览的提醒。请检查开学日期、周次和课程时间。</div>';
+      return `<div class="reminder-preview">${events.map(e=>{
+        const off=e.type==='start'?Number(settings.startOffset||0):Number(settings.endOffset||0);
+        const action=e.type==='start'?'上课':'下课';
+        const line=off>0?`${off}分钟后${action}:${e.slot}（${formatTime(e.type==='start'?e.startMs:(e.remindMs+off*60000))}）`:`现在${action}:${e.slot}`;
+        return `<div class="reminder-preview-item ${e.type==='end'?'end':''}"><div>${formatDateTime(e.remindMs)}${action}提醒</div><div>${escapeHtml(line)}</div></div>`;
+      }).join('')}</div>`;
+    }
+    function openReminderHelp(){
+      openModal('关于课程提醒？', `<div class="detail"><b>原生日历提醒更稳。</b><br>小德会把课程写入你选择的系统日历，并设置提醒。这样即使 App 被清后台，系统日历也能继续提醒。你可以随时回到本页重新同步，旧的小德提醒会自动替换。</div><div class="secondary-note">网页环境没有日历权限时，会退回导出 .ics 文件。</div>`);
+    }
+    function openReminderPermissionPanel(){
+      openModal('课程提醒', `
+        <div class="reminder-page">
+          <div class="reminder-card reminder-permission-hero">
+            <div class="big">先授权日历权限，再选择上课/下课怎么提醒。</div>
+            <div class="secondary-note">小德只会写入带有“小德课表同步标记”的提醒；重新同步时会替换旧提醒。</div>
+            <button class="btn primary reminder-confirm" id="requestCalendarPermissionBtn" type="button">授权日历权限</button>
+          </div>
+          <div class="reminder-card">
+            <div class="reminder-row" id="fallbackIcsWeek"><div class="left">没有权限时导出本周 .ics<small>可以手动导入系统日历。</small></div><div class="chev">›</div></div>
+            <div class="reminder-row" id="fallbackIcsAll"><div class="left">导出全学期 .ics<small>适合没有原生授权或网页端使用。</small></div><div class="chev">›</div></div>
+          </div>
+        </div>
+      `);
+      $('#requestCalendarPermissionBtn') && ($('#requestCalendarPermissionBtn').onclick=()=>{ try{ window.XiaoDeAndroid.requestCalendarPermission(); toast('请在系统弹窗中允许日历权限'); }catch(e){ toast(e.message||'无法请求权限'); } });
+      $('#fallbackIcsWeek') && ($('#fallbackIcsWeek').onclick=()=>exportCalendar('week'));
+      $('#fallbackIcsAll') && ($('#fallbackIcsAll').onclick=()=>exportCalendar('all'));
+    }
+    function openReminderSettingsPanel(){
+      let settings=loadReminderSettings();
+      const calResult=readAndroidCalendars();
+      const calendars=Array.isArray(calResult.calendars)?calResult.calendars:[];
+      if(calendars.length && !calendars.some(c=>String(c.id)===String(settings.calendarId))){
+        settings=saveReminderSettings({calendarId:String(calendars[0].id),calendarName:calendars[0].name||'默认日历'});
+      }
+      const startOptions=[0,5,10,15,20,30].map(n=>`<option value="${n}" ${Number(settings.startOffset)===n?'selected':''}>${n}分钟</option>`).join('');
+      const endOptions=[0,5,10,15,20,30].map(n=>`<option value="${n}" ${Number(settings.endOffset)===n?'selected':''}>${n}分钟</option>`).join('');
+      const calOptions=calendars.length?calendars.map(c=>`<option value="${escapeHtml(String(c.id))}" ${String(settings.calendarId)===String(c.id)?'selected':''}>${escapeHtml(c.name||c.account||'日历')}</option>`).join(''):`<option value="">未找到可写入日历</option>`;
+      openModal('课程提醒', `
+        <div class="reminder-page">
+          <div class="reminder-card"><div class="reminder-row" id="openReminderHelp"><div class="left">关于课程提醒？</div><div class="chev">›</div></div></div>
+          <div class="reminder-card">
+            <div class="reminder-row"><div class="left">开启上课提醒</div><button class="reminder-switch ${settings.startEnabled?'on':''}" id="reminderStartSwitch" type="button" aria-label="开启上课提醒"></button></div>
+            <div class="reminder-row"><div class="left">提前多久提醒</div><select class="reminder-pill" id="reminderStartOffset">${startOptions}</select></div>
+            <div class="reminder-row"><div class="left">开启下课提醒</div><button class="reminder-switch ${settings.endEnabled?'on':''}" id="reminderEndSwitch" type="button" aria-label="开启下课提醒"></button></div>
+            <div class="reminder-row"><div class="left">提前多久提醒</div><select class="reminder-pill" id="reminderEndOffset">${endOptions}</select></div>
+          </div>
+          <div class="secondary-note">选择导出到哪个日历</div>
+          <div class="reminder-card">
+            <div class="reminder-row"><div class="left">目标日历</div><select class="reminder-select" id="reminderCalendarSelect">${calOptions}</select></div>
+          </div>
+          <button class="btn primary reminder-confirm" id="confirmReminderSync" type="button">确定</button>
+          <div class="secondary-note">提醒预览</div>
+          <div id="reminderPreviewBox">${renderReminderPreview(settings)}</div>
+          <div class="quick-grid"><button class="feature-tile" id="exportWeekCalendarBtn"><span>📅</span><b>导出本周 .ics</b></button><button class="feature-tile" id="exportAllCalendarBtn"><span>🗓</span><b>导出全学期 .ics</b></button></div>
+        </div>
+      `);
+      const refreshPreview=()=>{ const st=loadReminderSettings(); const box=$('#reminderPreviewBox'); if(box) box.innerHTML=renderReminderPreview(st); };
+      $('#openReminderHelp') && ($('#openReminderHelp').onclick=openReminderHelp);
+      $('#reminderStartSwitch') && ($('#reminderStartSwitch').onclick=()=>{ const st=saveReminderSettings({startEnabled:!loadReminderSettings().startEnabled}); openReminderSettingsPanel(); });
+      $('#reminderEndSwitch') && ($('#reminderEndSwitch').onclick=()=>{ const st=saveReminderSettings({endEnabled:!loadReminderSettings().endEnabled}); openReminderSettingsPanel(); });
+      $('#reminderStartOffset') && ($('#reminderStartOffset').onchange=e=>{ saveReminderSettings({startOffset:Number(e.target.value)}); refreshPreview(); });
+      $('#reminderEndOffset') && ($('#reminderEndOffset').onchange=e=>{ saveReminderSettings({endOffset:Number(e.target.value)}); refreshPreview(); });
+      $('#reminderCalendarSelect') && ($('#reminderCalendarSelect').onchange=e=>{ const chosen=calendars.find(c=>String(c.id)===String(e.target.value)); saveReminderSettings({calendarId:e.target.value,calendarName:chosen?.name||''}); });
+      $('#confirmReminderSync') && ($('#confirmReminderSync').onclick=syncAndroidReminders);
+      $('#exportWeekCalendarBtn') && ($('#exportWeekCalendarBtn').onclick=()=>exportCalendar('week'));
+      $('#exportAllCalendarBtn') && ($('#exportAllCalendarBtn').onclick=()=>exportCalendar('all'));
+      if(!calResult.ok && calResult.message) toast(calResult.message);
+    }
+    function syncAndroidReminders(){
+      if(!hasAndroidCalendarBridge()) return exportCalendar('all');
+      const settings=loadReminderSettings();
+      if(!settings.calendarId) return toast('请先选择目标日历');
+      const events=buildReminderEvents(settings);
+      if(!events.length) return toast('没有可同步的课程提醒');
+      try{
+        window.XiaoDeAndroid.syncCourseReminders(JSON.stringify({version:1,calendarId:String(settings.calendarId),calendarName:settings.calendarName||'',settings,events}));
+        toast(`正在写入系统日历，共 ${events.length} 个提醒`);
+      }catch(e){ toast(e.message||'同步日历失败'); }
+    }
+    function openReminderPanel(){
+      if(hasAndroidCalendarBridge()){
+        if(!androidCalendarGranted()) return openReminderPermissionPanel();
+        return openReminderSettingsPanel();
+      }
+      openModal('课程提醒', `
+        <div class="detail"><b>推荐用系统日历提醒。</b><br>当前在网页环境，不能直接申请系统日历权限。可以导出 .ics 后导入系统日历。</div>
+        <div class="quick-grid" style="margin-top:12px">
+          <button class="feature-tile primary-tile" id="exportWeekCalendarBtn"><span>📅</span><b>导出本周日历</b></button>
+          <button class="feature-tile" id="exportAllCalendarBtn"><span>🗓</span><b>导出全学期日历</b></button>
+        </div>
+        <div class="secondary-note">提醒时间会按“课程提醒”设置保存；导入系统日历后仍可继续修改。</div>
+      `);
+      $('#exportWeekCalendarBtn') && ($('#exportWeekCalendarBtn').onclick=()=>exportCalendar('week'));
+      $('#exportAllCalendarBtn') && ($('#exportAllCalendarBtn').onclick=()=>exportCalendar('all'));
+    }
+    window.addEventListener('xiaode-calendar-permission', e=>{
+      if(e.detail && e.detail.granted){ toast('日历权限已允许'); openReminderSettingsPanel(); }
+      else toast('还没有日历权限，无法直接写入系统日历');
+    });
+    window.addEventListener('xiaode-calendar-sync-result', e=>{
+      const d=e.detail||{};
+      if(d.ok){ toast(`课程提醒已写入日历：${d.inserted||0} 个，已清理旧提醒 ${d.deleted||0} 个`); }
+      else toast(d.message||'同步日历失败');
+    });
+
+    function openPlaceholderModal(title,msg){ openModal(title, `<div class="detail">${msg}</div>`); }
+
+
+    async function handleFeatureAction(action){
+      if(action==='manage') return openFeatureHub();
+      if(action==='editCourses') return openManagePanel('course');
+      if(action==='today') return showTodayCourses();
+      if(action==='thisWeek'){ state.previewWeek=null; renderAll(); return toast('已回到本周'); }
+      if(action==='refresh'){ try{ await loadMe(); toast('已刷新我的课表'); }catch(e){ toast(e.message); } return; }
+      if(action==='feedback') return openFeedbackModal();
+      if(action==='scheduleSettings') return openScheduleSettingsModal();
+      if(action==='slotInfo') return openManagePanel('slot');
+      if(action==='backup') return openBackupPanel();
+      if(action==='account') return openAccountModal();
+      if(action==='tableSize') return openTableSizePanel();
+      if(action==='tableStyle') return openTableStylePanel();
+      if(action==='themePanel') return openThemePanel();
+      if(action==='toggleToolbar') return setBottomToolbarHidden(!state.bottomToolbarHidden);
+      if(action==='jwxt') return openQuickJwxtImport();
+      if(action==='help') return openHelpModal();
+      if(action==='share') return shareCourseFile();
+      if(action==='reminder') return openReminderPanel();
+      if(action==='logout') return $('#logoutBtn')?.click();
+    }
+    $('#fillDemoBtn').onclick=()=>{ $('#loginUsername').value='demo'; $('#loginPassword').value='123456'; };
+    $$('.theme-btn').forEach(b=>b.onclick=()=>{applyTheme(b.dataset.theme); renderAll(); schedulePreferenceSave(); toast('已切换配色：'+b.textContent.trim().split(' ')[0]);});
+    $$('[data-feature-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.featureAction));
+    $$('.mobile-bottom-tool[data-bottom-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.bottomAction));
+    $('#loginBtn').onclick=async()=>{ try{ const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUsername').value.trim(),password:$('#loginPassword').value})}); state.token=r.token; localStorage.setItem('courseTableUserToken',state.token); await loadMe(); toast('登录成功'); }catch(e){ toast(e.message); } };
+    $('#registerBtn').onclick=async()=>{ try{ const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name:$('#registerName').value.trim(),username:$('#registerUsername').value.trim(),password:$('#registerPassword').value})}); state.token=r.token; localStorage.setItem('courseTableUserToken',state.token); await loadMe(); toast('注册并登录成功'); }catch(e){ toast(e.message); } };
+    $('#logoutBtn').onclick=async()=>{ rememberCurrentAccount(); state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); resetToLoggedOut(); toast('已在本机退出，已保存账号仍可快速切换'); };
+    $('#refreshBtn').onclick=async()=>{ 
+  try{ 
+    await loadMe(); 
+    toast('已刷新我的课表'); 
+  }catch(e){ 
+    toast(e.message); 
+  } 
+};
+
+$('#toggleManageBtn').onclick = () => {
+  $('#drawer').classList.toggle('hidden');
+};
+$('#todayCoursesBtn').onclick = showTodayCourses;
+$('#thisWeekBtn').onclick = () => { state.previewWeek = null; renderAll(); toast('已回到本周'); };
+$('#feedbackBtn').onclick = openFeedbackModal;
+$('#viewFeedbackBtn').onclick = openFeedbackList;
+$('#viewUsersBtn').onclick = openAdminUsers;
+$('#helpBtnMain').onclick = openHelpModal;
+$('#helpBtnAuth').onclick = openHelpModal;
+    $('#prevWeek').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); };
+    $('#nextWeek').onclick=()=>{ state.previewWeek=Math.min(Number(state.meta.totalWeeks||17),getSelectedWeek()+1); renderAll(); };
+    $('#prevWeekInline') && ($('#prevWeekInline').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); });
+    $('#thisWeekInline') && ($('#thisWeekInline').onclick=()=>{ state.previewWeek=null; renderAll(); toast('已回到本周'); });
+    $('#nextWeekInline') && ($('#nextWeekInline').onclick=()=>{ state.previewWeek=Math.min(Number(state.meta?.totalWeeks||17),getSelectedWeek()+1); renderAll(); });
+    $$('.mode .btn').forEach(b=>b.onclick=()=>{ state.infoMode=b.dataset.mode; renderAll(); });
+    $('#saveCourseBtn').onclick=async()=>{ try{ const payload={name:$('#courseName').value.trim(),shortName:$('#courseShortName').value.trim(),teacher:$('#courseTeacher').value.trim(),location:$('#courseLocation').value.trim(),classGroup:$('#courseClassGroup').value.trim(),day:Number($('#courseDay').value),slot:Number($('#courseSlot').value),weekText:$('#courseWeekText').value.trim(),oddEven:$('#courseOddEven').value,category:$('#courseCategory').value}; if(state.editingCourse){ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'PUT',body:JSON.stringify(payload)}); } else { await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)}); } await loadMe(); clearCourseForm(); toast('课程已保存到你的课表'); }catch(e){ toast(e.message); } };
+    $('#resetCourseBtn').onclick=clearCourseForm;
+    $('#deleteCourseBtn').onclick=async()=>{ if(!state.editingCourse) return; if(!confirm(`删除 ${state.editingCourse.name}？`)) return; try{ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'DELETE'}); await loadMe(); clearCourseForm(); toast('已从你的课表删除'); }catch(e){ toast(e.message); } };
+    $('#clearAllCoursesBtn').onclick=async()=>{ if(!confirm('确定清空当前账号的所有课程吗？此操作不可恢复。')) return; try{ const r=await api('/api/my/courses',{method:'DELETE'}); await loadMe(); clearCourseForm(); toast(`已清空 ${r.count||0} 门课程`); }catch(e){ toast(e.message); } };
+    async function doImport(replace){ try{ let rows=[]; const text=$('#importText').value.trim(); if(text) rows=parseCsv(text); else if(window._importRows) rows=window._importRows; const courses=normalizeImported(rows); if(!courses.length) return toast('没有可导入的课程'); await api('/api/my/import',{method:'POST',body:JSON.stringify({courses,replace})}); await loadMe(); toast(`已${replace?'覆盖':'追加'}导入 ${courses.length} 条到你的课表，并已刷新显示`); }catch(e){ toast(e.message); } }
+    $('#replaceImportBtn').onclick=()=>doImport(true); $('#appendImportBtn').onclick=()=>doImport(false);
+
+    let jwxtReplaceMode = true;
+    let latestAndroidImportCode = '';
+    function hasAndroidBridge(){
+      return !!(window.XiaoDeAndroid && typeof window.XiaoDeAndroid.startImport === 'function');
+    }
+    function startAndroidNativeImport(payload){
+      if(!hasAndroidBridge()) return false;
+      try{
+        window.XiaoDeAndroid.startImport(JSON.stringify(payload));
+        return true;
+      }catch(e){
+        console.warn('Android bridge startImport failed', e);
+        return false;
+      }
+    }
+    function refreshAndroidBridgeUi(){
+      const inApp = hasAndroidBridge() || window.__XIAODE_ANDROID_APP__;
+      const createBtn = $('#createImportCodeBtn');
+      const guideBtn = $('#androidImportGuideBtn');
+      if(createBtn) createBtn.textContent = inApp ? '开始 App 内教务导入' : '生成一次性导入码';
+      if(guideBtn) guideBtn.textContent = inApp ? '查看导入说明' : '查看 App 导入步骤';
+    }
+    window.addEventListener('xiaode-android-ready', refreshAndroidBridgeUi);
+    setTimeout(refreshAndroidBridgeUi, 300);
+    setTimeout(refreshAndroidBridgeUi, 1200);
+    function syncAndroidImportUi(){
+      const input=$('#appServerUrl');
+      if(input) {
+        input.value=location.origin;
+        input.onclick=()=>selectInputText(input);
+        input.onfocus=()=>selectInputText(input);
+      }
+      const modeBtn=$('#jwxtAppendModeBtn');
+      if(modeBtn) modeBtn.textContent=jwxtReplaceMode?'当前：覆盖导入':'当前：追加导入';
+      refreshAndroidBridgeUi();
+    }
+    function selectInputText(input){
+      if(!input) return;
+      input.focus();
+      input.select();
+      if(input.setSelectionRange) input.setSelectionRange(0, input.value.length);
+    }
+    function fallbackCopy(value, inputSelector){
+      const input = inputSelector ? $(inputSelector) : null;
+      if(input){
+        input.value = value;
+        selectInputText(input);
+        try{ if(document.execCommand('copy')) return true; }catch{}
+        return false;
+      }
+      const temp=document.createElement('input');
+      temp.value=value;
+      temp.style.position='fixed';
+      temp.style.left='-9999px';
+      document.body.appendChild(temp);
+      selectInputText(temp);
+      let ok=false;
+      try{ ok=document.execCommand('copy'); }catch{}
+      document.body.removeChild(temp);
+      return ok;
+    }
+    async function copyText(value, successText, inputSelector){
+      if(!value) return toast('没有可复制的内容');
+      try{
+        if(navigator.clipboard && window.isSecureContext){
+          await navigator.clipboard.writeText(value);
+          toast(successText);
+          return;
+        }
+      }catch{}
+      if(fallbackCopy(value, inputSelector)){
+        toast(successText);
+      }else{
+        const input = inputSelector ? $(inputSelector) : null;
+        if(input) selectInputText(input);
+        toast('已选中内容；如果没有自动复制，请长按/复制选中内容');
+      }
+    }
+    async function copyServerUrl(){
+      const value=location.origin;
+      await copyText(value, '服务器地址已复制，可以粘贴到 Android 导入助手', '#appServerUrl');
+    }
+    async function createAndroidImportCode(){
+      try{
+        const xnm=$('#jwxtXnm')?.value.trim()||'2025';
+        const xqm=$('#jwxtXqm')?.value.trim()||'12';
+        const r=await api('/api/my/import-code',{method:'POST',body:JSON.stringify({replace:jwxtReplaceMode,xnm,xqm})});
+        latestAndroidImportCode=r.code;
+        $('#androidImportCodeBox')?.classList.remove('hidden');
+        const codeInput=$('#androidImportCode');
+        const metaInput=$('#androidImportCodeMeta');
+        if(codeInput) {
+          codeInput.value=r.code;
+          codeInput.onclick=()=>selectInputText(codeInput);
+          codeInput.onfocus=()=>selectInputText(codeInput);
+          setTimeout(()=>selectInputText(codeInput), 80);
+        }
+        const codeBig=$('#androidImportCodeBig');
+        if(codeBig){
+          codeBig.textContent=r.code;
+          codeBig.onclick=()=>copyImportCode();
+        }
+        if(metaInput){
+          const expire = r.expiresAt ? new Date(r.expiresAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '10 分钟内';
+          metaInput.value=`${expire} 前有效；${r.replace?'覆盖导入':'追加导入'}；xnm=${r.xnm}，xqm=${r.xqm}`;
+        }
+        const payload={
+          code:r.code,
+          xnm:r.xnm || xnm,
+          xqm:r.xqm || xqm,
+          replace:!!r.replace,
+          expiresAt:r.expiresAt || '',
+          serverUrl:location.origin
+        };
+        if(startAndroidNativeImport(payload)){
+          const box=$('#androidImportCodeBox');
+          if(box) box.classList.add('hidden');
+          toast('导入码已生成，正在进入 App 内教务系统导入页…');
+          return;
+        }
+        toast(`导入码已生成：${r.code}。已自动选中，可直接复制或长按复制。`);
+      }catch(e){
+        toast(e.message||'导入码生成失败');
+      }
+    }
+    async function copyImportCode(){
+      const value=latestAndroidImportCode || $('#androidImportCode')?.value || '';
+      if(!value) return toast('请先生成导入码');
+      await copyText(value, '导入码已复制，可以粘贴到 Android 导入助手', '#androidImportCode');
+    }
+    function openAndroidImportGuide(){
+      const xnm=$('#jwxtXnm')?.value.trim()||'2025';
+      const xqm=$('#jwxtXqm')?.value.trim()||'12';
+      openModal('Android 教务导入流程', `
+        <div class="detail" style="margin-bottom:12px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">核心原则</div>
+          <div>不保存教务系统密码；不自动代输账号密码；不让同学复制控制台脚本。</div>
+          <div>App 内置 WebView 打开教务系统，同学自己登录，App 只读取登录后的 Cookie 请求课表 JSON。</div>
+        </div>
+        <div class="detail" style="margin-bottom:12px">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">当前配置</div>
+          <div>服务器地址：<b>${escapeHtml(location.origin)}</b></div>
+          <div>学年 xnm：<b>${escapeHtml(xnm)}</b>；学期 xqm：<b>${escapeHtml(xqm)}</b></div>
+          <div>导入模式：<b>${jwxtReplaceMode?'覆盖原课表':'追加到原课表'}</b></div>
+        </div>
+        <div class="detail">
+          <div style="font-weight:900;font-size:18px;margin-bottom:6px">推荐接口</div>
+          <div>网页版生成导入码：<code>POST /api/my/import-code</code></div>
+          <div>App 校验导入码：<code>GET /api/import-code/:code</code></div>
+          <div>App 提交教务 JSON：<code>POST /api/import-code/:code/submit</code></div>
+          <div class="sub">开发测试仍可使用账号 token：<code>POST /api/my/import/jwxt-json</code></div>
+        </div>
+      `);
+    }
+    $('#copyServerUrlBtn') && ($('#copyServerUrlBtn').onclick=copyServerUrl);
+    $('#createImportCodeBtn') && ($('#createImportCodeBtn').onclick=createAndroidImportCode);
+    $('#copyImportCodeBtn') && ($('#copyImportCodeBtn').onclick=copyImportCode);
+    $('#androidImportGuideBtn') && ($('#androidImportGuideBtn').onclick=openAndroidImportGuide);
+    $('#jwxtAppendModeBtn') && ($('#jwxtAppendModeBtn').onclick=()=>{ jwxtReplaceMode=!jwxtReplaceMode; syncAndroidImportUi(); toast(jwxtReplaceMode?'导入模式：覆盖原课表':'导入模式：追加到原课表'); });
+    syncAndroidImportUi();
+
+    $('#fileInput').onchange=async(e)=>{ try{ const file=e.target.files[0]; if(!file) return; const lower=file.name.toLowerCase(); if(lower.endsWith('.csv')){ window._importRows=parseCsv(await file.text()); const n=normalizeImported(window._importRows).length; toast(`CSV 已读取，匹配到 ${n} 条课程`); return; } if(lower.endsWith('.pdf')){ window._importRows=await parsePdfFile(file); toast(`PDF 已读取，匹配到 ${window._importRows.length} 条课程`); return; } const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:'array'}); let bestRows=[]; let bestCount=0; let bestName=''; for(const name of wb.SheetNames){ const sheet=wb.Sheets[name]; const matrix = buildSheetMatrix(sheet); const gridCandidate = detectGridSheet(matrix) ? parseGridSheet(matrix) : []; const recordCandidate = XLSX.utils.sheet_to_json(sheet,{defval:''}); const gridCount = normalizeImported(gridCandidate).length; const recordCount = normalizeImported(recordCandidate).length; const candidate = gridCount >= recordCount ? gridCandidate : recordCandidate; const count = Math.max(gridCount, recordCount); if(count>bestCount){ bestCount=count; bestRows=candidate; bestName=name; } } window._importRows=bestRows; if(!bestCount) throw new Error('没有读取到有效内容：这份 Excel 不是普通导入表。我已按网格课表尝试解析，但还没匹配到课程。'); toast(`Excel 已读取（${bestName}），匹配到 ${bestCount} 条课程，可点击覆盖或追加导入`); }catch(err){ console.error(err); toast(err.message||'文件读取失败'); } };
+    $('#saveProfileBtn') && ($('#saveProfileBtn').onclick=async()=>{ try{ const r=await api('/api/my/profile',{method:'PUT',body:JSON.stringify({name:$('#profileName').value.trim(), username:state.user?.username||''})}); state.user=r.user; renderAll(); toast('姓名已保存'); }catch(e){ toast(e.message); } });
+    $('#changePasswordBtn') && ($('#changePasswordBtn').onclick=async()=>{ try{ await api('/api/auth/password',{method:'PUT',body:JSON.stringify({oldPassword:$('#oldPassword').value,newPassword:$('#newPassword').value})}); $('#oldPassword').value=''; $('#newPassword').value=''; toast('密码已修改'); }catch(e){ toast(e.message); } });
+    $('#closeModal').onclick=closeModal; $('#backdrop').onclick=closeModal;
+
+
+
+
+    // Android 桌面小组件同步：网页负责把当前课表数据交给 App，App 保存到本地并刷新小组件。
+    // 小组件不直接读取 WebView 页面；它只读取 Android 本地缓存，所以每次 loadMe / 导入成功后都同步一次。
+    function hasWidgetBridge(){
+      return !!(window.XiaoDeAndroid && typeof window.XiaoDeAndroid.syncWidgetData === 'function');
+    }
+    function buildWidgetPayload(){
+      const now = new Date();
+      const current = state.user ? nowCourse(now) : null;
+      const next = state.user ? nextCourse(now) : null;
+      return {
+        version: 1,
+        reason: 'web-sync',
+        syncedAt: new Date().toISOString(),
+        scheduleName: state.user ? (state.user.name || state.user.username || '我的课表') : '我的课表',
+        user: state.user ? { name: state.user.name || '', username: state.user.username || '' } : null,
+        meta: state.meta ? {
+          campusName: state.meta.campusName || '',
+          termStart: state.meta.termStart || '',
+          totalWeeks: Number(state.meta.totalWeeks || 17),
+          currentWeek: getWeek(now)
+        } : {},
+        slots: (state.slots || []).map(s => ({
+          slot: Number(s.slot),
+          label: s.label || '',
+          range: s.range || '',
+          start: s.start || '',
+          end: s.end || ''
+        })),
+        courses: (state.courses || []).map(c => ({
+          id: c.id || '',
+          name: c.name || '',
+          teacher: c.teacher || '',
+          location: c.location || '',
+          day: Number(c.day || 1),
+          slot: Number(c.slot || 1),
+          weeks: Array.isArray(c.weeks) ? c.weeks : [],
+          weekText: c.weekText || '',
+          oddEven: c.oddEven || 'all',
+          category: c.category || 'custom'
+        })),
+        currentCourse: current ? { name: current.name || '', location: current.location || '', day: current.day, slot: current.slot } : null,
+        nextCourse: next ? { name: next.name || '', location: next.location || '', day: next.day, slot: next.slot } : null
+      };
+    }
+    function syncWidgetNow(reason='manual'){
+      if(!hasWidgetBridge() || !state.user || !state.meta) return false;
+      try{
+        const payload = buildWidgetPayload();
+        payload.reason = reason;
+        window.XiaoDeAndroid.syncWidgetData(JSON.stringify(payload));
+        return true;
+      }catch(e){
+        console.warn('小组件同步失败', e);
+        return false;
+      }
+    }
+    window.__xiaodeSyncWidgetNow = syncWidgetNow;
+    window.addEventListener('xiaode-android-ready', () => setTimeout(()=>syncWidgetNow('android-ready'), 250));
+
+    // App 原生导入页完成后会主动触发这个事件。
+    // 这样不依赖用户切换焦点，导入成功后课表页会立刻拉取最新数据。
+    window.addEventListener('xiaode-import-success', async (ev) => {
+      try{
+        await loadMe();
+        const d = ev.detail || window.__xiaodeLastImportSummary || {};
+        const saved = d.savedCount ?? d.count ?? '';
+        syncWidgetNow('import-success');
+        toast(saved !== '' ? `教务导入成功，已更新 ${saved} 条课程` : '教务导入成功，课表已刷新');
+      }catch(e){
+        console.warn('Android 导入成功后刷新失败：', e);
+        toast('导入成功，但课表自动刷新失败，请手动刷新');
+      }
+    });
+
+    // Android 导入助手完成后，用户回到网页版时自动刷新当前账号课表。
+    // 不用 setInterval 常驻轮询，避免多用户时给后端制造无意义请求。
+    let lastAutoRefreshAt = 0;
+    async function autoRefreshAfterAndroidImport(reason='auto'){
+      if(!state.token || !state.user) return;
+      const now = Date.now();
+      if(now - lastAutoRefreshAt < 3000) return;
+      lastAutoRefreshAt = now;
+      try{
+        await loadMe();
+        console.log('课表已自动刷新：', reason);
+      }catch(e){
+        console.warn('自动刷新失败：', e);
+      }
+    }
+    window.addEventListener('focus', () => autoRefreshAfterAndroidImport('window-focus'));
+    document.addEventListener('visibilitychange', () => {
+      if(!document.hidden) autoRefreshAfterAndroidImport('visibilitychange');
+    });
+
+    applyTheme(state.theme);
+    updateBottomToolbar(false);
+    updateToolbarToggleTile();
+    (async function init(){ try{ await bootPublic(); if(state.token){ try{ await loadMe(); }catch{ state.token=''; localStorage.removeItem('courseTableUserToken'); resetToLoggedOut(); } } else { renderAuthState(false); } setInterval(()=>state.meta&&renderHeader(),1000); }catch(e){ console.error(e); toast('后端未启动，请先运行 backend 服务'); } })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,246 @@
+package com.xiaode.importhelper
+
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.widget.RemoteViews
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
+
+object WidgetUpdater {
+    private val DAYS = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+    data class Slot(
+        val slot: Int,
+        val label: String,
+        val range: String,
+        val start: String,
+        val end: String
+    )
+
+    data class Course(
+        val name: String,
+        val teacher: String,
+        val location: String,
+        val day: Int,
+        val slot: Int,
+        val weeks: Set<Int>,
+        val oddEven: String
+    )
+
+    data class DisplayCourse(
+        val status: String,
+        val course: Course?,
+        val slot: Slot?,
+        val dayLabel: String,
+        val subText: String
+    )
+
+    fun updateAll(context: Context) {
+        val manager = AppWidgetManager.getInstance(context)
+        val ids = manager.getAppWidgetIds(ComponentName(context, XiaoDeWidgetProvider::class.java))
+        if (ids.isNotEmpty()) update(context, manager, ids)
+    }
+
+    fun update(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
+        for (id in appWidgetIds) {
+            manager.updateAppWidget(id, buildViews(context))
+        }
+    }
+
+    private fun buildViews(context: Context): RemoteViews {
+        val views = RemoteViews(context.packageName, R.layout.widget_next_course)
+        val payload = WidgetDataStore.getPayload(context)
+        val updatedAt = WidgetDataStore.getUpdatedAt(context)
+
+        val openIntent = Intent(context, MainActivity::class.java)
+        val openPendingIntent = PendingIntent.getActivity(
+            context,
+            1001,
+            openIntent,
+            pendingFlags()
+        )
+        views.setOnClickPendingIntent(R.id.widgetRoot, openPendingIntent)
+
+        val refreshIntent = Intent(context, XiaoDeWidgetProvider::class.java).apply {
+            action = XiaoDeWidgetProvider.ACTION_REFRESH
+        }
+        val refreshPendingIntent = PendingIntent.getBroadcast(
+            context,
+            1002,
+            refreshIntent,
+            pendingFlags()
+        )
+        views.setOnClickPendingIntent(R.id.widgetRefresh, refreshPendingIntent)
+
+        if (payload.isBlank()) {
+            views.setTextViewText(R.id.widgetTitle, "小德课表")
+            views.setTextViewText(R.id.widgetChip, "未同步")
+            views.setTextViewText(R.id.widgetCourseName, "打开 App 同步课表")
+            views.setTextViewText(R.id.widgetMeta1, "登录后进入课表页，桌面小组件会自动更新")
+            views.setTextViewText(R.id.widgetMeta2, "点击小组件打开小德课表")
+            views.setTextViewText(R.id.widgetSub, "")
+            return views
+        }
+
+        try {
+            val json = JSONObject(payload)
+            val scheduleName = json.optString("scheduleName", "我的课表").ifBlank { "我的课表" }
+            val meta = json.optJSONObject("meta") ?: JSONObject()
+            val termStart = meta.optString("termStart", "")
+            val totalWeeks = meta.optInt("totalWeeks", 17)
+            val slots = parseSlots(json.optJSONArray("slots") ?: JSONArray())
+            val courses = parseCourses(json.optJSONArray("courses") ?: JSONArray())
+            val now = Calendar.getInstance()
+            val week = getWeek(termStart, totalWeeks, now)
+            val display = findDisplayCourse(courses, slots, week, now)
+
+            views.setTextViewText(R.id.widgetTitle, "小德课表 · $scheduleName")
+            views.setTextViewText(R.id.widgetChip, display.status)
+            val course = display.course
+            val slot = display.slot
+            if (course == null || slot == null) {
+                views.setTextViewText(R.id.widgetCourseName, "今天没有下一节课")
+                views.setTextViewText(R.id.widgetMeta1, "第 ${week} 周 · 可以休息一下")
+                views.setTextViewText(R.id.widgetMeta2, display.subText)
+            } else {
+                views.setTextViewText(R.id.widgetCourseName, course.name.ifBlank { "未命名课程" })
+                views.setTextViewText(R.id.widgetMeta1, "${display.dayLabel} · ${slot.label} · ${slot.range}")
+                views.setTextViewText(R.id.widgetMeta2, course.location.ifBlank { course.teacher.ifBlank { "地点未填写" } })
+            }
+            val syncText = if (updatedAt > 0) "同步 ${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(updatedAt))} · 第 ${week} 周" else "第 ${week} 周"
+            views.setTextViewText(R.id.widgetSub, syncText)
+        } catch (e: Exception) {
+            views.setTextViewText(R.id.widgetTitle, "小德课表")
+            views.setTextViewText(R.id.widgetChip, "需刷新")
+            views.setTextViewText(R.id.widgetCourseName, "小组件数据解析失败")
+            views.setTextViewText(R.id.widgetMeta1, "请打开 App，刷新小德课表页面")
+            views.setTextViewText(R.id.widgetMeta2, e.message ?: "未知错误")
+            views.setTextViewText(R.id.widgetSub, "")
+        }
+        return views
+    }
+
+    private fun pendingFlags(): Int {
+        return PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+    }
+
+    private fun parseSlots(array: JSONArray): Map<Int, Slot> {
+        val map = linkedMapOf<Int, Slot>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: continue
+            val slot = o.optInt("slot", i + 1)
+            val range = o.optString("range", "")
+            val start = o.optString("start", range.substringBefore("-", "00:00")).ifBlank { "00:00" }
+            val end = o.optString("end", range.substringAfter("-", "23:59")).ifBlank { "23:59" }
+            map[slot] = Slot(slot, o.optString("label", "第${slot}节"), range.ifBlank { "$start-$end" }, start, end)
+        }
+        return map
+    }
+
+    private fun parseCourses(array: JSONArray): List<Course> {
+        val list = mutableListOf<Course>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: continue
+            val weeksArray = o.optJSONArray("weeks") ?: JSONArray()
+            val weeks = mutableSetOf<Int>()
+            for (j in 0 until weeksArray.length()) weeks.add(weeksArray.optInt(j))
+            list.add(
+                Course(
+                    name = o.optString("name", ""),
+                    teacher = o.optString("teacher", ""),
+                    location = o.optString("location", ""),
+                    day = o.optInt("day", 1),
+                    slot = o.optInt("slot", 1),
+                    weeks = weeks,
+                    oddEven = o.optString("oddEven", "all")
+                )
+            )
+        }
+        return list
+    }
+
+    private fun getWeek(termStart: String, totalWeeks: Int, now: Calendar): Int {
+        return try {
+            val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
+            fmt.isLenient = false
+            val start = fmt.parse(termStart) ?: return 1
+            val diffDays = floor((now.timeInMillis - start.time) / 86_400_000.0).toInt()
+            max(1, min(totalWeeks, diffDays / 7 + 1))
+        } catch (_: Exception) {
+            1
+        }
+    }
+
+    private fun getDayIndex(calendar: Calendar): Int {
+        val d = calendar.get(Calendar.DAY_OF_WEEK)
+        return if (d == Calendar.SUNDAY) 7 else d - 1
+    }
+
+    private fun timeToMin(time: String): Int {
+        val parts = time.split(":")
+        val h = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        return h * 60 + m
+    }
+
+    private fun activeInWeek(c: Course, week: Int): Boolean {
+        if (c.weeks.isNotEmpty() && !c.weeks.contains(week)) return false
+        if (c.oddEven == "odd" && week % 2 == 0) return false
+        if (c.oddEven == "even" && week % 2 == 1) return false
+        return true
+    }
+
+    private fun findDisplayCourse(courses: List<Course>, slots: Map<Int, Slot>, currentWeek: Int, now: Calendar): DisplayCourse {
+        val today = getDayIndex(now)
+        val minuteNow = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+        val thisWeek = courses.filter { activeInWeek(it, currentWeek) }
+
+        val current = thisWeek.firstOrNull { c ->
+            c.day == today && slots[c.slot]?.let { minuteNow in timeToMin(it.start)..timeToMin(it.end) } == true
+        }
+        if (current != null) {
+            val slot = slots[current.slot]
+            return DisplayCourse("上课中", current, slot, DAYS.getOrElse(today - 1) { "今天" }, "正在上课")
+        }
+
+        val nextToday = thisWeek
+            .filter { c -> c.day == today && (slots[c.slot]?.let { timeToMin(it.start) > minuteNow } == true) }
+            .minByOrNull { c -> timeToMin(slots[c.slot]?.start ?: "23:59") }
+        if (nextToday != null) {
+            val slot = slots[nextToday.slot]
+            val diff = (slot?.let { timeToMin(it.start) - minuteNow } ?: 0)
+            val status = if (diff in 1..10) "即将上课" else "课间休息"
+            return DisplayCourse(status, nextToday, slot, "今天", "距离下一节约 ${diff} 分钟")
+        }
+
+        for (offset in 1..6) {
+            val futureDay = ((today - 1 + offset) % 7) + 1
+            val week = currentWeek + ((today - 1 + offset) / 7)
+            val candidate = courses
+                .filter { c -> c.day == futureDay && activeInWeek(c, week) }
+                .minByOrNull { c -> timeToMin(slots[c.slot]?.start ?: "23:59") }
+            if (candidate != null) {
+                val slot = slots[candidate.slot]
+                val label = when (offset) {
+                    1 -> "明天"
+                    2 -> "后天"
+                    else -> DAYS.getOrElse(futureDay - 1) { "之后" }
+                }
+                return DisplayCourse("下一节", candidate, slot, label, "下一次有课：$label")
+            }
+        }
+
+        return DisplayCourse("今日结束", null, null, "", "本周后续暂无课程")
+    }
+}

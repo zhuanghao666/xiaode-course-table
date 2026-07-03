@@ -1,0 +1,100 @@
+--- patchbase/server.js	2026-05-19 07:23:46.494302672 +0000
++++ webproj_v6/backend/src/server.js	2026-05-19 07:22:34.482745373 +0000
+@@ -500,6 +500,46 @@
+ });
+ 
+ 
++// Android 导入助手专用：App 内 WebView 中由用户自己登录教务系统，App 只上传课表 JSON，不上传教务密码。
++app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
++  const { jwxtData, replace = true } = req.body || {};
++  if (!jwxtData || typeof jwxtData !== 'object') {
++    return res.status(400).json({ ok: false, message: '缺少教务系统课表数据 jwxtData' });
++  }
++
++  const converted = convertJwxtKbData(jwxtData);
++  if (!converted.length) {
++    const rawCount = Array.isArray(jwxtData.kbList) ? jwxtData.kbList.length : 0;
++    return res.status(400).json({
++      ok: false,
++      rawCount,
++      message: rawCount
++        ? `收到教务系统 kbList=${rawCount} 条，但没有识别到可导入课程。可能字段结构变化或学年学期参数不对。`
++        : '教务系统返回数据里没有 kbList。请确认已在 App 内登录教务系统，并且学年学期参数正确。'
++    });
++  }
++
++  const db = readDb();
++  const normalized = converted
++    .map((item) => normalizeCourse(item, req.auth.user.id))
++    .filter((c) => c.name && c.day && c.slot);
++
++  if (replace) {
++    db.courses = db.courses.filter((c) => c.userId !== req.auth.user.id).concat(normalized);
++  } else {
++    db.courses = db.courses.concat(normalized);
++  }
++  writeDb(db);
++
++  res.json({
++    ok: true,
++    count: normalized.length,
++    rawCount: Array.isArray(jwxtData.kbList) ? jwxtData.kbList.length : 0,
++    message: `已通过 Android 导入助手导入 ${normalized.length} 条课程`
++  });
++});
++
++
+ app.post('/api/my/import-code', requireLogin, (req, res) => {
+   const { replace = true, xnm = '2025', xqm = '12' } = req.body || {};
+   const db = readDb();
+@@ -565,46 +605,10 @@
+ });
+ 
+ app.post('/api/my/import/jwxt', requireLogin, async (req, res) => {
+-  const { jwxtUsername = '', jwxtPassword = '', xnm = '2025', xqm = '12', replace = true } = req.body || {};
+-
+-  try {
+-    const jwxtData = await fetchJwxtScheduleByPuppeteer({
+-      username: String(jwxtUsername || '').trim(),
+-      password: String(jwxtPassword || ''),
+-      xnm: String(xnm || '2025').trim(),
+-      xqm: String(xqm || '12').trim()
+-    });
+-
+-    const converted = convertJwxtKbData(jwxtData);
+-    if (!converted.length) {
+-      return res.status(400).json({ ok: false, message: '教务系统返回了数据，但没有识别到可导入课程' });
+-    }
+-
+-    const db = readDb();
+-    const normalized = converted
+-      .map((item) => normalizeCourse(item, req.auth.user.id))
+-      .filter((c) => c.name && c.day && c.slot);
+-
+-    if (replace) {
+-      db.courses = db.courses.filter((c) => c.userId !== req.auth.user.id).concat(normalized);
+-    } else {
+-      db.courses = db.courses.concat(normalized);
+-    }
+-
+-    writeDb(db);
+-    res.json({
+-      ok: true,
+-      count: normalized.length,
+-      rawCount: Array.isArray(jwxtData.kbList) ? jwxtData.kbList.length : 0,
+-      message: `已从教务系统导入 ${normalized.length} 条课程`
+-    });
+-  } catch (err) {
+-    console.error('JWXT import failed:', err);
+-    res.status(500).json({
+-      ok: false,
+-      message: err?.message || '教务系统导入失败。请确认已在弹出的教务系统窗口里完成登录。'
+-    });
+-  }
++  res.status(410).json({
++    ok: false,
++    message: '网页版自动登录导入已停用。请使用 Android「小德课表导入助手」：在 App 内打开教务系统，用户自己登录后读取课表并上传。'
++  });
+ });
+ 
+ app.put('/api/my/profile', requireLogin, (req, res) => {
