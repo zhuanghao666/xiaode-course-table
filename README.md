@@ -1,6 +1,6 @@
 # 小德课表
 
-小德课表是一个课表管理项目，包含 Web 端、Node.js/Express 后端和 Android WebView App。当前稳定版本是 v39 本地 MySQL 测试版。
+小德课表包含 Web、Node.js/Express 后端和 Android WebView App。当前代码为 v39 JSON 主存储、MySQL 异步镜像与 accountId 隔离版本。
 
 ## 目录结构
 
@@ -9,6 +9,9 @@ xiaode-course-table/
 ├─ web/       Web 前端与 Node.js/Express 后端
 ├─ android/   Android App
 ├─ docs/      部署、数据库和维护文档
+├─ scripts/   启动、健康检查、备份和恢复脚本
+├─ CHANGELOG.md
+├─ VERSION
 ├─ README.md
 ├─ VERSION.md
 └─ .gitignore
@@ -17,27 +20,29 @@ xiaode-course-table/
 ## 当前版本
 
 - 当前版本：v39
-- Web 项目来源：xiaode-course-table-web-v39-mysql-local-test
+- Web 版本：v39（`package.json` 版本 `39.0.0`）
 - Android 版本：0.28.0-v39-account-isolation
 - 默认存储：`web/backend/data/db.json`
-- 可选模式：本地 MySQL 测试模式，使用 `XIAODE_STORAGE=mysql` 开启
+- 可选模式：MySQL 异步镜像，使用 `XIAODE_STORAGE=mysql` 开启
 
 ## Web 启动方式
 
-推荐直接在项目根目录运行一键启动脚本。默认安全提示输入 MySQL 密码，密码不会写入文件：
+MySQL 镜像模式会安全提示输入密码，密码不会写入文件：
 
 ```powershell
 cd C:\work3\xiaode-course-table
-.\start-v39.ps1
+.\scripts\start-web-mysql.ps1
 ```
 
 纯 JSON 模式：
 
 ```powershell
-.\start-v39.ps1 -JsonOnly
+.\scripts\start-web-json.ps1
 ```
 
-默认使用 `db.json` 本地文件模式：
+启动脚本会检查 Node、npm、后端目录和端口占用。Node 前台运行期间 PowerShell 窗口一直被占用是正常现象，按 `Ctrl+C` 可停止服务。
+
+手工开发模式：
 
 ```powershell
 cd C:\work3\xiaode-course-table\web\backend
@@ -60,15 +65,18 @@ http://localhost:3001
 健康检查：
 
 ```powershell
-.\health-v39.ps1
+.\scripts\check-storage.ps1
 ```
 
 备份和恢复唯一主存储 `db.json`：
 
 ```powershell
-.\backup-v39.ps1 -Label before-change
-.\restore-v39.ps1 -BackupFile 'C:\work3\xiaode-course-table\backups\v39\db-时间-before-change.json'
+.\scripts\backup-data.ps1 -Label before-change
+.\scripts\restore-data.ps1 -BackupDirectory 'C:\work3\xiaode-course-table\backups\yyyyMMdd-HHmmss' -WhatIf
+.\scripts\restore-data.ps1 -BackupDirectory 'C:\work3\xiaode-course-table\backups\yyyyMMdd-HHmmss'
 ```
+
+恢复前必须先停止后端。系统级脚本恢复整个 `db.json`；网页内的“我的备份”只恢复当前 accountId，两者不能混用。详见 `docs/storage.md`。
 
 ## Android 打包方式
 
