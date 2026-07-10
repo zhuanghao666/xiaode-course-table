@@ -656,14 +656,18 @@
     function pickHealingQuote(){return HEALING_QUOTES[Math.floor(Math.random()*HEALING_QUOTES.length)]}
     const STYLE={public_required:'var(--public_required)',major_required:'var(--major_required)',major_elective:'var(--major_elective)',public_elective:'var(--public_elective)',lab:'var(--lab)',custom:'var(--custom)'};
     const DEFAULT_COURSE_SETTINGS={totalWeeks:'',weekStartDay:'1',termStart:'',showLocation:true,showTeacher:true,showClassGroup:false,customTime:false};
-    function loadCourseSettings(){try{return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(localStorage.getItem('xiaodeCourseSettings')||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
-    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:localStorage.getItem('xiaodeTheme')||'morandi',bottomToolbarHidden:localStorage.getItem('xiaodeBottomToolbarHidden')==='1',tableSize:localStorage.getItem('xiaodeTableSize')||'classic',tableDayWidth:Number(localStorage.getItem('xiaodeTableDayWidth')||0),tableRowHeight:Number(localStorage.getItem('xiaodeTableRowHeight')||0),hideFifthSlot:localStorage.getItem('xiaodeHideFifthSlot')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false};
+    function currentStoredAccountId(){return localStorage.getItem('xiaodeCurrentAccountId')||''}
+    function accountStorageKey(base,accountId=currentStoredAccountId()){return accountId?`${base}:${accountId}`:`${base}:guest`}
+    function loadAccountLocal(base,fallback=''){const scoped=localStorage.getItem(accountStorageKey(base));return scoped===null?(localStorage.getItem(base)??fallback):scoped}
+    function saveAccountLocal(base,value,accountId=state.accountId){localStorage.setItem(accountStorageKey(base,accountId),String(value))}
+    function loadCourseSettings(){try{const scoped=localStorage.getItem(accountStorageKey('xiaodeCourseSettings'));const legacy=localStorage.getItem('xiaodeCourseSettings');return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
+    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
     const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
     function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
-    function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;localStorage.setItem('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
+    function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;saveAccountLocal('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
     function showLoginPanel(){ $('#loginPanel')?.classList.remove('hidden'); $('#registerPanel')?.classList.add('hidden'); }
     function showRegisterPanel(){ $('#registerPanel')?.classList.remove('hidden'); $('#loginPanel')?.classList.add('hidden'); }
-    async function api(path, opts={}){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(state.token?{'x-user-token':state.token}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
+    async function api(path, opts={}, authToken=state.token){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(authToken?{'x-user-token':authToken}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
     
     function currentPreferenceSnapshot(){
       return {
@@ -678,22 +682,27 @@
         reminderSettings:loadReminderSettings()
       };
     }
-    function accountPreferenceKey(user=state.user){ return user?.id ? `xiaodeAccountPreferences:${user.id}` : ''; }
+    function accountPreferenceKey(user=state.user){ const accountId=user?.accountId||state.accountId; return accountId ? `xiaodeAccountPreferences:${accountId}` : ''; }
     function saveAccountPreferencesLocal(snapshot=currentPreferenceSnapshot(), user=state.user){ const key=accountPreferenceKey(user); if(key) localStorage.setItem(key, JSON.stringify(snapshot)); }
     function loadAccountPreferencesLocal(user=state.user){ try{ const key=accountPreferenceKey(user); return key?JSON.parse(localStorage.getItem(key)||'{}'):{}; }catch(_){ return {}; } }
-    let preferenceSaveTimer=null;
+    const preferenceSaveTimers=new Map();
     function schedulePreferenceSave(){
       if(!state.user||!state.token||state.applyingPreferences) return;
       const prefs=currentPreferenceSnapshot();
+      const accountId=state.accountId;
+      const token=state.token;
       saveAccountPreferencesLocal(prefs);
       const list=getSavedAccounts();
-      const idx=list.findIndex(x=>x.username===state.user.username);
+      const idx=list.findIndex(x=>(x.accountId&&x.accountId===accountId)||(!x.accountId&&x.username===state.user.username));
       if(idx>=0){ list[idx]={...list[idx], preferences:prefs, name:state.user.name, username:state.user.username, savedAt:new Date().toISOString()}; setSavedAccounts(list); }
-      clearTimeout(preferenceSaveTimer);
-      preferenceSaveTimer=setTimeout(async()=>{
-        try{ await api('/api/my/preferences',{method:'PUT',body:JSON.stringify({preferences:currentPreferenceSnapshot()})}); }
+      clearTimeout(preferenceSaveTimers.get(accountId));
+      const timer=setTimeout(async()=>{
+        if(!accountId||!token) return;
+        try{ await api('/api/my/preferences',{method:'PUT',body:JSON.stringify({preferences:prefs})},token); }
         catch(e){ console.warn('preferences save failed', e); }
+        finally{ if(preferenceSaveTimers.get(accountId)===timer) preferenceSaveTimers.delete(accountId); }
       },500);
+      preferenceSaveTimers.set(accountId,timer);
     }
     function applyAccountPreferences(pref={}){
       const fallback=loadAccountPreferencesLocal();
@@ -704,10 +713,10 @@
         if(p.infoMode) state.infoMode=p.infoMode;
         if(typeof p.bottomToolbarHidden==='boolean') state.bottomToolbarHidden=!!p.bottomToolbarHidden;
         if(p.tableSize) applyTableSize(p.tableSize,{width:p.tableDayWidth,height:p.tableRowHeight});
-        if(typeof p.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!p.hideFifthSlot; localStorage.setItem('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
+        if(typeof p.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!p.hideFifthSlot; saveAccountLocal('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
         if(p.courseSettings) saveCourseSettings(p.courseSettings);
         if(p.reminderSettings) saveReminderSettings(p.reminderSettings);
-        localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+        saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
         updateBottomToolbar(!!state.user);
         state.preferencesReady=true;
         saveAccountPreferencesLocal(currentPreferenceSnapshot());
@@ -719,7 +728,7 @@
     function pad(n){return String(n).padStart(2,'0')}
     function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:Number(settings.totalWeeks||meta.totalWeeks||17),termStart:settings.termStart||meta.termStart||'',weekStartDay:Number(settings.weekStartDay||1)}; }
     function totalWeeks(){ return Number(effectiveMeta().totalWeeks||17); }
-    function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem('xiaodeCourseSettings', JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
+    function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
     function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
     const DEFAULT_12_SLOTS=[
       {slot:1,label:'第1节',start:'08:00',end:'08:45',range:'08:00-08:45'},
@@ -762,7 +771,7 @@
     }
     function setHideFifthSlot(hidden){
       state.hideFifthSlot=!!hidden;
-      localStorage.setItem('xiaodeHideFifthSlot', state.hideFifthSlot?'1':'0');
+      saveAccountLocal('xiaodeHideFifthSlot', state.hideFifthSlot?'1':'0');
       renderAll();
       schedulePreferenceSave();
       toast(state.hideFifthSlot?'已隐藏第5节':'已显示第5节');
@@ -822,7 +831,7 @@
     }
     function setBottomToolbarHidden(hidden){
       state.bottomToolbarHidden=!!hidden;
-      localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+      saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
       updateBottomToolbar(!!state.user);
       schedulePreferenceSave();
       if(state.bottomToolbarHidden){
@@ -863,16 +872,16 @@
       state.tableSize=normalizeTableSize(size);
       const hasWidth=Object.prototype.hasOwnProperty.call(opts,'width');
       const hasHeight=Object.prototype.hasOwnProperty.call(opts,'height');
-      const storedWidth=localStorage.getItem('xiaodeTableDayWidth');
-      const storedHeight=localStorage.getItem('xiaodeTableRowHeight');
+      const storedWidth=loadAccountLocal('xiaodeTableDayWidth','');
+      const storedHeight=loadAccountLocal('xiaodeTableRowHeight','');
       state.tableDayWidth=normalizeTableDayWidth(hasWidth?opts.width:(storedWidth || defaultTableDayWidth(state.tableSize)), state.tableSize);
       state.tableRowHeight=normalizeTableRowHeight(hasHeight?opts.height:(storedHeight || defaultTableRowHeight(state.tableSize)), state.tableSize);
       document.body.dataset.tableSize=state.tableSize;
       document.body.style.setProperty('--xiaode-day-width', `${state.tableDayWidth}px`);
       document.body.style.setProperty('--xiaode-row-height', `${state.tableRowHeight}px`);
-      localStorage.setItem('xiaodeTableSize', state.tableSize);
-      localStorage.setItem('xiaodeTableDayWidth', String(state.tableDayWidth));
-      localStorage.setItem('xiaodeTableRowHeight', String(state.tableRowHeight));
+      saveAccountLocal('xiaodeTableSize', state.tableSize);
+      saveAccountLocal('xiaodeTableDayWidth', String(state.tableDayWidth));
+      saveAccountLocal('xiaodeTableRowHeight', String(state.tableRowHeight));
       updateTableSizeTile();
     }
     function updateTableWidthControls(){
@@ -1396,8 +1405,53 @@
     async function parsePdfFile(file){ if(!window.pdfjsLib){ throw new Error('PDF 组件未加载完成，请稍后再试'); } const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({data:buf}).promise; let text=''; for(let i=1;i<=pdf.numPages;i++){ const page = await pdf.getPage(i); const content = await page.getTextContent(); text += content.items.map(it=>it.str).join(' ') + '\n'; } const rows = rowsFromPdfText(text); if(!rows.length) throw new Error('这个 PDF 没提取到可识别课程'); return rows; }
     function renderAll(){ applyTheme(state.theme); applyCourseSettingsVisibility(); applyTableSize(state.tableSize); updateBottomToolbar(!!state.user); if(!state.meta) return; renderHeader(); updateTrialFeatures(); if(!state.user) return; fillSelectors(); renderWeeks(); renderTable(); renderMobile(); renderSlots(); if($('#profileName')) $('#profileName').value=state.user.name||''; $$('.mode .btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.infoMode)); updateToolbarToggleTile(); updateTableSizeTile(); updateTrialFeatures(); }
     async function bootPublic(){ const data=await api('/api/public/bootstrap'); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); renderAll(); }
-    async function loadMe(){ const data=await api('/api/auth/me'); state.user=data.user; state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||''; if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); state.courses=data.courses; applyAccountPreferences(data.preferences||{}); renderAuthState(true); clearCourseForm(); renderAll(); rememberCurrentAccount(); syncWidgetNow('loadMe'); }
-    function resetToLoggedOut(){ state.user=null; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); renderAuthState(false); renderAll(); }
+    async function loadMe({expectedAccountId=''}={}){
+      const requestVersion=++state.accountRequestVersion;
+      const tokenAtStart=state.token;
+      const data=await api('/api/auth/me',{},tokenAtStart);
+      if(requestVersion!==state.accountRequestVersion || tokenAtStart!==state.token) return false;
+      const responseAccountId=data.accountId||data.user?.accountId||'';
+      if(!responseAccountId) throw new Error('后端没有返回 accountId');
+      if(expectedAccountId && responseAccountId!==expectedAccountId) throw new Error('账号切换响应与目标 accountId 不一致');
+      const previousAccountId=state.accountId;
+      state.user=data.user;
+      state.accountId=responseAccountId;
+      localStorage.setItem('xiaodeCurrentAccountId',state.accountId);
+      state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||'';
+      if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
+      state.meta=data.meta;
+      state.slots=normalizeClientSlots(data.slots);
+      state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId);
+      if(previousAccountId&&previousAccountId!==state.accountId) latestAndroidImportCode='';
+      applyAccountPreferences(data.preferences||{});
+      renderAuthState(true);
+      clearCourseForm();
+      renderAll();
+      rememberCurrentAccount();
+      syncWidgetNow('loadMe');
+      return true;
+    }
+    function beginAccountTransition(){
+      const version=++state.accountTransitionVersion;
+      ++state.accountRequestVersion;
+      let overlay=$('#accountSwitchLoading');
+      if(!overlay){
+        overlay=document.createElement('div');
+        overlay.id='accountSwitchLoading';
+        overlay.setAttribute('aria-live','polite');
+        overlay.style.cssText='position:fixed;inset:0;z-index:9999;display:grid;place-items:center;background:rgba(250,248,244,.92);font-weight:700;color:#4d514c';
+        document.body.appendChild(overlay);
+      }
+      overlay.dataset.version=String(version);
+      overlay.textContent='正在切换账号…';
+      overlay.classList.remove('hidden');
+      return version;
+    }
+    function endAccountTransition(version){
+      const overlay=$('#accountSwitchLoading');
+      if(overlay?.dataset.version===String(version)) overlay.classList.add('hidden');
+    }
+    function resetToLoggedOut(){ ++state.accountRequestVersion; state.user=null; state.accountId=''; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); localStorage.removeItem('xiaodeCurrentAccountId'); renderAuthState(false); renderAll(); }
 
     $('#showRegisterAuth') && ($('#showRegisterAuth').onclick=showRegisterPanel);
     $('#accountAvatarBtn') && ($('#accountAvatarBtn').onclick=openAccountModal);
@@ -1409,8 +1463,9 @@
         const raw=JSON.parse(localStorage.getItem('xiaodeSavedAccounts')||'[]');
         const byUser=new Map();
         raw.filter(x=>x&&x.username&&(x.token||x.switchKey)).forEach(x=>{
-          const old=byUser.get(x.username)||{};
-          byUser.set(x.username,{...old,...x});
+          const key=x.accountId||`legacy:${x.username}`;
+          const old=byUser.get(key)||{};
+          byUser.set(key,{...old,...x});
         });
         return [...byUser.values()];
       }catch{return []}
@@ -1419,8 +1474,9 @@
     function rememberCurrentAccount(){
       if(!state.user||!state.token) return;
       const switchKey = state.switchKey || state.user.switchKey || '';
-      const list=getSavedAccounts().filter(x=>x.username!==state.user.username);
-      list.unshift({name:state.user.name||state.user.username, username:state.user.username, token:state.token, switchKey, preferences:currentPreferenceSnapshot(), savedAt:new Date().toISOString()});
+      const list=getSavedAccounts().filter(x=>x.accountId?x.accountId!==state.accountId:x.username!==state.user.username);
+      const lastUsedAt=new Date().toISOString();
+      list.unshift({serverBaseUrl:location.origin,accountId:state.accountId,userId:state.user.id,name:state.user.name||state.user.username,username:state.user.username,token:state.token,switchKey,preferences:currentPreferenceSnapshot(),lastUsedAt,savedAt:lastUsedAt});
       setSavedAccounts(list);
     }
     async function loginAndLoad(username,password){
@@ -1429,7 +1485,7 @@
       state.switchKey=r.switchKey||r.user?.switchKey||'';
       localStorage.setItem('courseTableUserToken',state.token);
       if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
-      await loadMe();
+      await loadMe({expectedAccountId:r.accountId||r.user?.accountId||''});
       return r;
     }
     function openAccountReloginModal(acc){
@@ -1455,8 +1511,11 @@
       setTimeout(()=>$('#quickSwitchPassword')?.focus(),80);
     }
     async function switchToSavedAccount(acc, btn){
+      const transitionVersion=beginAccountTransition();
+      try{
       const previousToken=state.token;
       const previousSwitchKey=state.switchKey;
+      const previousAccountId=state.accountId;
       const originalText=btn?.textContent||'切换';
       if(btn){ btn.disabled=true; btn.textContent='切换中…'; }
       let tokenError=null;
@@ -1466,7 +1525,8 @@
           state.switchKey=acc.switchKey||'';
           localStorage.setItem('courseTableUserToken',state.token);
           if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
-          await loadMe();
+          const loaded=await loadMe({expectedAccountId:acc.accountId||''});
+          if(!loaded) return;
           closeModal();
           toast('已切换到 '+(state.user?.name||acc.name||acc.username));
           return;
@@ -1476,12 +1536,13 @@
       }
       try{
         if(acc.switchKey){
-          const r=await api('/api/auth/quick-switch',{method:'POST',body:JSON.stringify({username:acc.username,switchKey:acc.switchKey})});
+          const r=await api('/api/auth/quick-switch',{method:'POST',body:JSON.stringify({username:acc.username,accountId:acc.accountId||'',switchKey:acc.switchKey})});
           state.token=r.token;
           state.switchKey=r.switchKey||acc.switchKey||'';
           localStorage.setItem('courseTableUserToken',state.token);
           if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
-          await loadMe();
+          const loaded=await loadMe({expectedAccountId:acc.accountId||r.accountId||''});
+          if(!loaded) return;
           closeModal();
           toast('已切换到 '+(state.user?.name||acc.name||acc.username));
           return;
@@ -1491,17 +1552,23 @@
       }
       state.token=previousToken;
       state.switchKey=previousSwitchKey;
+      state.accountId=previousAccountId;
       if(previousToken) localStorage.setItem('courseTableUserToken',previousToken); else localStorage.removeItem('courseTableUserToken');
       if(previousSwitchKey) localStorage.setItem('xiaodeCurrentSwitchKey',previousSwitchKey); else localStorage.removeItem('xiaodeCurrentSwitchKey');
+      if(previousAccountId) localStorage.setItem('xiaodeCurrentAccountId',previousAccountId); else localStorage.removeItem('xiaodeCurrentAccountId');
       if(btn){ btn.disabled=false; btn.textContent=originalText; }
       if(tokenError && /请先登录|过期|401|登录状态/i.test(String(tokenError.message||tokenError))){
         toast('这个账号需要重新验证一次');
         return openAccountReloginModal(acc);
       }
       toast(tokenError?.message||'切换失败');
+      return;
+      }finally{
+        endAccountTransition(transitionVersion);
+      }
     }
     
-    function removeSavedAccount(username){ setSavedAccounts(getSavedAccounts().filter(x=>x.username!==username)); }
+    function removeSavedAccount(identity){ setSavedAccounts(getSavedAccounts().filter(x=>x.accountId!==identity&&x.username!==identity)); }
     function openRenameAccountModal(){
       const oldUsername=state.user?.username||'';
       openModal('重命名账号', `
@@ -1693,11 +1760,11 @@
       if(pref.infoMode) state.infoMode=pref.infoMode;
       if(typeof pref.bottomToolbarHidden==='boolean'){
         state.bottomToolbarHidden=!!pref.bottomToolbarHidden;
-        localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+        saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
         updateBottomToolbar(!!state.user);
       }
       if(pref.tableSize) applyTableSize(pref.tableSize,{width:pref.tableDayWidth,height:pref.tableRowHeight});
-      if(typeof pref.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!pref.hideFifthSlot; localStorage.setItem('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
+      if(typeof pref.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!pref.hideFifthSlot; saveAccountLocal('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
       if(pref.courseSettings){ saveCourseSettings(pref.courseSettings); }
       if(pref.reminderSettings){ saveReminderSettings(pref.reminderSettings); }
       schedulePreferenceSave();
@@ -1915,12 +1982,12 @@
     }
     const DEFAULT_REMINDER_SETTINGS={startEnabled:true,startOffset:10,endEnabled:true,endOffset:0,calendarId:'',calendarName:''};
     function loadReminderSettings(){
-      try{return {...DEFAULT_REMINDER_SETTINGS,...JSON.parse(localStorage.getItem('xiaodeReminderSettings')||'{}')}}catch(_){return {...DEFAULT_REMINDER_SETTINGS}}
+      try{const scoped=localStorage.getItem(accountStorageKey('xiaodeReminderSettings',state.accountId));const legacy=localStorage.getItem('xiaodeReminderSettings');return {...DEFAULT_REMINDER_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch(_){return {...DEFAULT_REMINDER_SETTINGS}}
     }
     function saveReminderSettings(next){
       const merged={...loadReminderSettings(),...(next||{})};
       merged.startOffset=Number(merged.startOffset||0); merged.endOffset=Number(merged.endOffset||0);
-      localStorage.setItem('xiaodeReminderSettings', JSON.stringify(merged));
+      localStorage.setItem(accountStorageKey('xiaodeReminderSettings',state.accountId), JSON.stringify(merged));
       schedulePreferenceSave();
       return merged;
     }
@@ -1943,7 +2010,7 @@
     function formatTime(ms){ const d=new Date(Number(ms)); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
     function buildReminderEvents(settings=loadReminderSettings()){
       const events=[];
-      const markerBase=(state.user?.username||state.user?.name||'me').replace(/[^\w\u4e00-\u9fa5-]/g,'_');
+      const markerBase=(state.accountId||'unknown').replace(/[^\w-]/g,'_');
       for(let w=1;w<=totalWeeks();w++){
         coursesForWeek(w).forEach(c=>{
           const dayDate=weekDateObject(c.day,w); if(!dayDate) return;
@@ -1959,7 +2026,7 @@
             events.push({
               type:'start',title:`${titleBase} 上课提醒`,courseName:titleBase,location,week:w,day:Number(c.day||1),slot:Number(c.slot||1),
               startMs,endMs,remindMs,alarmMinutes:Math.max(0,off),fingerprint:`${markerBase}-${c.id||titleBase}-${w}-start`,
-              description:`${common}\n${off>0?`${off} 分钟后上课`:'现在上课'}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-start`
+              description:`${common}\n${off>0?`${off} 分钟后上课`:'现在上课'}\nXIAODE_ACCOUNT::${state.accountId}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-start`
             });
           }
           if(settings.endEnabled){
@@ -1968,7 +2035,7 @@
             events.push({
               type:'end',title:`${titleBase} 下课提醒`,courseName:titleBase,location,week:w,day:Number(c.day||1),slot:Number(c.slot||1),
               startMs:remindMs,endMs:remindMs+5*60000,remindMs,alarmMinutes:0,fingerprint:`${markerBase}-${c.id||titleBase}-${w}-end`,
-              description:`${common}\n${off>0?`${off} 分钟后下课`:'现在下课'}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-end`
+              description:`${common}\n${off>0?`${off} 分钟后下课`:'现在下课'}\nXIAODE_ACCOUNT::${state.accountId}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-end`
             });
           }
         });
@@ -2055,7 +2122,7 @@
       const events=buildReminderEvents(settings);
       if(!events.length) return toast('没有可同步的课程提醒');
       try{
-        window.XiaoDeAndroid.syncCourseReminders(JSON.stringify({version:1,calendarId:String(settings.calendarId),calendarName:settings.calendarName||'',settings,events}));
+        window.XiaoDeAndroid.syncCourseReminders(JSON.stringify({version:2,accountId:state.accountId,calendarId:String(settings.calendarId),calendarName:settings.calendarName||'',settings,events}));
         toast(`正在写入系统日历，共 ${events.length} 个提醒`);
       }catch(e){ toast(e.message||'同步日历失败'); }
     }
@@ -2113,8 +2180,8 @@
     $$('.theme-btn').forEach(b=>b.onclick=()=>{applyTheme(b.dataset.theme); renderAll(); schedulePreferenceSave(); toast('已切换配色：'+b.textContent.trim().split(' ')[0]);});
     $$('[data-feature-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.featureAction));
     $$('.mobile-bottom-tool[data-bottom-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.bottomAction));
-    $('#loginBtn').onclick=async()=>{ try{ const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUsername').value.trim(),password:$('#loginPassword').value})}); state.token=r.token; localStorage.setItem('courseTableUserToken',state.token); await loadMe(); toast('登录成功'); }catch(e){ toast(e.message); } };
-    $('#registerBtn').onclick=async()=>{ try{ const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name:$('#registerName').value.trim(),username:$('#registerUsername').value.trim(),password:$('#registerPassword').value})}); state.token=r.token; localStorage.setItem('courseTableUserToken',state.token); await loadMe(); toast('注册并登录成功'); }catch(e){ toast(e.message); } };
+    $('#loginBtn').onclick=async()=>{ try{ await loginAndLoad($('#loginUsername').value.trim(),$('#loginPassword').value); toast('登录成功'); }catch(e){ toast(e.message); } };
+    $('#registerBtn').onclick=async()=>{ try{ const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name:$('#registerName').value.trim(),username:$('#registerUsername').value.trim(),password:$('#registerPassword').value})}); state.token=r.token; state.switchKey=r.switchKey||r.user?.switchKey||''; localStorage.setItem('courseTableUserToken',state.token); await loadMe({expectedAccountId:r.accountId||r.user?.accountId||''}); toast('注册并登录成功'); }catch(e){ toast(e.message); } };
     $('#logoutBtn').onclick=async()=>{ rememberCurrentAccount(); state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); resetToLoggedOut(); toast('已在本机退出，已保存账号仍可快速切换'); };
     $('#refreshBtn').onclick=async()=>{ 
   try{ 
@@ -2256,6 +2323,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
         }
         const payload={
           code:r.code,
+          accountId:r.accountId||state.accountId,
           xnm:r.xnm || xnm,
           xqm:r.xqm || xqm,
           replace:!!r.replace,
@@ -2327,7 +2395,8 @@ $('#helpBtnAuth').onclick = openHelpModal;
       const current = state.user ? nowCourse(now) : null;
       const next = state.user ? nextCourse(now) : null;
       return {
-        version: 1,
+        version: 2,
+        accountId: state.accountId,
         reason: 'web-sync',
         syncedAt: new Date().toISOString(),
         scheduleName: state.user ? (state.user.name || state.user.username || '我的课表') : '我的课表',
@@ -2380,8 +2449,10 @@ $('#helpBtnAuth').onclick = openHelpModal;
     // 这样不依赖用户切换焦点，导入成功后课表页会立刻拉取最新数据。
     window.addEventListener('xiaode-import-success', async (ev) => {
       try{
-        await loadMe();
         const d = ev.detail || window.__xiaodeLastImportSummary || {};
+        if(d.accountId && d.accountId!==state.accountId) return;
+        const accountAtStart=state.accountId;
+        await loadMe({expectedAccountId:accountAtStart});
         const saved = d.savedCount ?? d.count ?? '';
         syncWidgetNow('import-success');
         toast(saved !== '' ? `教务导入成功，已更新 ${saved} 条课程` : '教务导入成功，课表已刷新');
@@ -2400,7 +2471,8 @@ $('#helpBtnAuth').onclick = openHelpModal;
       if(now - lastAutoRefreshAt < 3000) return;
       lastAutoRefreshAt = now;
       try{
-        await loadMe();
+        const accountAtStart=state.accountId;
+        await loadMe({expectedAccountId:accountAtStart});
         console.log('课表已自动刷新：', reason);
       }catch(e){
         console.warn('自动刷新失败：', e);

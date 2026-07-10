@@ -658,11 +658,13 @@
     const DEFAULT_COURSE_SETTINGS={totalWeeks:'',weekStartDay:'1',termStart:'',showLocation:true,showTeacher:true,showClassGroup:false,customTime:false};
     function currentStoredAccountId(){return localStorage.getItem('xiaodeCurrentAccountId')||''}
     function accountStorageKey(base,accountId=currentStoredAccountId()){return accountId?`${base}:${accountId}`:`${base}:guest`}
+    function loadAccountLocal(base,fallback=''){const scoped=localStorage.getItem(accountStorageKey(base));return scoped===null?(localStorage.getItem(base)??fallback):scoped}
+    function saveAccountLocal(base,value,accountId=state.accountId){localStorage.setItem(accountStorageKey(base,accountId),String(value))}
     function loadCourseSettings(){try{const scoped=localStorage.getItem(accountStorageKey('xiaodeCourseSettings'));const legacy=localStorage.getItem('xiaodeCourseSettings');return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
-    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:localStorage.getItem('xiaodeTheme')||'morandi',bottomToolbarHidden:localStorage.getItem('xiaodeBottomToolbarHidden')==='1',tableSize:localStorage.getItem('xiaodeTableSize')||'classic',tableDayWidth:Number(localStorage.getItem('xiaodeTableDayWidth')||0),tableRowHeight:Number(localStorage.getItem('xiaodeTableRowHeight')||0),hideFifthSlot:localStorage.getItem('xiaodeHideFifthSlot')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false};
+    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
     const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
     function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
-    function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;localStorage.setItem('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
+    function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;saveAccountLocal('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
     function showLoginPanel(){ $('#loginPanel')?.classList.remove('hidden'); $('#registerPanel')?.classList.add('hidden'); }
     function showRegisterPanel(){ $('#registerPanel')?.classList.remove('hidden'); $('#loginPanel')?.classList.add('hidden'); }
     async function api(path, opts={}, authToken=state.token){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(authToken?{'x-user-token':authToken}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
@@ -711,10 +713,10 @@
         if(p.infoMode) state.infoMode=p.infoMode;
         if(typeof p.bottomToolbarHidden==='boolean') state.bottomToolbarHidden=!!p.bottomToolbarHidden;
         if(p.tableSize) applyTableSize(p.tableSize,{width:p.tableDayWidth,height:p.tableRowHeight});
-        if(typeof p.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!p.hideFifthSlot; localStorage.setItem('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
+        if(typeof p.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!p.hideFifthSlot; saveAccountLocal('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
         if(p.courseSettings) saveCourseSettings(p.courseSettings);
         if(p.reminderSettings) saveReminderSettings(p.reminderSettings);
-        localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+        saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
         updateBottomToolbar(!!state.user);
         state.preferencesReady=true;
         saveAccountPreferencesLocal(currentPreferenceSnapshot());
@@ -769,7 +771,7 @@
     }
     function setHideFifthSlot(hidden){
       state.hideFifthSlot=!!hidden;
-      localStorage.setItem('xiaodeHideFifthSlot', state.hideFifthSlot?'1':'0');
+      saveAccountLocal('xiaodeHideFifthSlot', state.hideFifthSlot?'1':'0');
       renderAll();
       schedulePreferenceSave();
       toast(state.hideFifthSlot?'已隐藏第5节':'已显示第5节');
@@ -829,7 +831,7 @@
     }
     function setBottomToolbarHidden(hidden){
       state.bottomToolbarHidden=!!hidden;
-      localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+      saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
       updateBottomToolbar(!!state.user);
       schedulePreferenceSave();
       if(state.bottomToolbarHidden){
@@ -870,16 +872,16 @@
       state.tableSize=normalizeTableSize(size);
       const hasWidth=Object.prototype.hasOwnProperty.call(opts,'width');
       const hasHeight=Object.prototype.hasOwnProperty.call(opts,'height');
-      const storedWidth=localStorage.getItem('xiaodeTableDayWidth');
-      const storedHeight=localStorage.getItem('xiaodeTableRowHeight');
+      const storedWidth=loadAccountLocal('xiaodeTableDayWidth','');
+      const storedHeight=loadAccountLocal('xiaodeTableRowHeight','');
       state.tableDayWidth=normalizeTableDayWidth(hasWidth?opts.width:(storedWidth || defaultTableDayWidth(state.tableSize)), state.tableSize);
       state.tableRowHeight=normalizeTableRowHeight(hasHeight?opts.height:(storedHeight || defaultTableRowHeight(state.tableSize)), state.tableSize);
       document.body.dataset.tableSize=state.tableSize;
       document.body.style.setProperty('--xiaode-day-width', `${state.tableDayWidth}px`);
       document.body.style.setProperty('--xiaode-row-height', `${state.tableRowHeight}px`);
-      localStorage.setItem('xiaodeTableSize', state.tableSize);
-      localStorage.setItem('xiaodeTableDayWidth', String(state.tableDayWidth));
-      localStorage.setItem('xiaodeTableRowHeight', String(state.tableRowHeight));
+      saveAccountLocal('xiaodeTableSize', state.tableSize);
+      saveAccountLocal('xiaodeTableDayWidth', String(state.tableDayWidth));
+      saveAccountLocal('xiaodeTableRowHeight', String(state.tableRowHeight));
       updateTableSizeTile();
     }
     function updateTableWidthControls(){
@@ -1403,8 +1405,53 @@
     async function parsePdfFile(file){ if(!window.pdfjsLib){ throw new Error('PDF 组件未加载完成，请稍后再试'); } const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({data:buf}).promise; let text=''; for(let i=1;i<=pdf.numPages;i++){ const page = await pdf.getPage(i); const content = await page.getTextContent(); text += content.items.map(it=>it.str).join(' ') + '\n'; } const rows = rowsFromPdfText(text); if(!rows.length) throw new Error('这个 PDF 没提取到可识别课程'); return rows; }
     function renderAll(){ applyTheme(state.theme); applyCourseSettingsVisibility(); applyTableSize(state.tableSize); updateBottomToolbar(!!state.user); if(!state.meta) return; renderHeader(); updateTrialFeatures(); if(!state.user) return; fillSelectors(); renderWeeks(); renderTable(); renderMobile(); renderSlots(); if($('#profileName')) $('#profileName').value=state.user.name||''; $$('.mode .btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.infoMode)); updateToolbarToggleTile(); updateTableSizeTile(); updateTrialFeatures(); }
     async function bootPublic(){ const data=await api('/api/public/bootstrap'); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); renderAll(); }
-    async function loadMe(){ const data=await api('/api/auth/me'); const previousAccountId=state.accountId; state.user=data.user; state.accountId=data.accountId||data.user?.accountId||''; if(!state.accountId) throw new Error('后端没有返回 accountId'); localStorage.setItem('xiaodeCurrentAccountId',state.accountId); state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||''; if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId); if(previousAccountId&&previousAccountId!==state.accountId) latestAndroidImportCode=''; applyAccountPreferences(data.preferences||{}); renderAuthState(true); clearCourseForm(); renderAll(); rememberCurrentAccount(); syncWidgetNow('loadMe'); }
-    function resetToLoggedOut(){ state.user=null; state.accountId=''; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); localStorage.removeItem('xiaodeCurrentAccountId'); renderAuthState(false); renderAll(); }
+    async function loadMe({expectedAccountId=''}={}){
+      const requestVersion=++state.accountRequestVersion;
+      const tokenAtStart=state.token;
+      const data=await api('/api/auth/me',{},tokenAtStart);
+      if(requestVersion!==state.accountRequestVersion || tokenAtStart!==state.token) return false;
+      const responseAccountId=data.accountId||data.user?.accountId||'';
+      if(!responseAccountId) throw new Error('后端没有返回 accountId');
+      if(expectedAccountId && responseAccountId!==expectedAccountId) throw new Error('账号切换响应与目标 accountId 不一致');
+      const previousAccountId=state.accountId;
+      state.user=data.user;
+      state.accountId=responseAccountId;
+      localStorage.setItem('xiaodeCurrentAccountId',state.accountId);
+      state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||'';
+      if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
+      state.meta=data.meta;
+      state.slots=normalizeClientSlots(data.slots);
+      state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId);
+      if(previousAccountId&&previousAccountId!==state.accountId) latestAndroidImportCode='';
+      applyAccountPreferences(data.preferences||{});
+      renderAuthState(true);
+      clearCourseForm();
+      renderAll();
+      rememberCurrentAccount();
+      syncWidgetNow('loadMe');
+      return true;
+    }
+    function beginAccountTransition(){
+      const version=++state.accountTransitionVersion;
+      ++state.accountRequestVersion;
+      let overlay=$('#accountSwitchLoading');
+      if(!overlay){
+        overlay=document.createElement('div');
+        overlay.id='accountSwitchLoading';
+        overlay.setAttribute('aria-live','polite');
+        overlay.style.cssText='position:fixed;inset:0;z-index:9999;display:grid;place-items:center;background:rgba(250,248,244,.92);font-weight:700;color:#4d514c';
+        document.body.appendChild(overlay);
+      }
+      overlay.dataset.version=String(version);
+      overlay.textContent='正在切换账号…';
+      overlay.classList.remove('hidden');
+      return version;
+    }
+    function endAccountTransition(version){
+      const overlay=$('#accountSwitchLoading');
+      if(overlay?.dataset.version===String(version)) overlay.classList.add('hidden');
+    }
+    function resetToLoggedOut(){ ++state.accountRequestVersion; state.user=null; state.accountId=''; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); localStorage.removeItem('xiaodeCurrentAccountId'); renderAuthState(false); renderAll(); }
 
     $('#showRegisterAuth') && ($('#showRegisterAuth').onclick=showRegisterPanel);
     $('#accountAvatarBtn') && ($('#accountAvatarBtn').onclick=openAccountModal);
@@ -1428,7 +1475,8 @@
       if(!state.user||!state.token) return;
       const switchKey = state.switchKey || state.user.switchKey || '';
       const list=getSavedAccounts().filter(x=>x.accountId?x.accountId!==state.accountId:x.username!==state.user.username);
-      list.unshift({accountId:state.accountId,name:state.user.name||state.user.username, username:state.user.username, token:state.token, switchKey, preferences:currentPreferenceSnapshot(), savedAt:new Date().toISOString()});
+      const lastUsedAt=new Date().toISOString();
+      list.unshift({serverBaseUrl:location.origin,accountId:state.accountId,userId:state.user.id,name:state.user.name||state.user.username,username:state.user.username,token:state.token,switchKey,preferences:currentPreferenceSnapshot(),lastUsedAt,savedAt:lastUsedAt});
       setSavedAccounts(list);
     }
     async function loginAndLoad(username,password){
@@ -1437,7 +1485,7 @@
       state.switchKey=r.switchKey||r.user?.switchKey||'';
       localStorage.setItem('courseTableUserToken',state.token);
       if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
-      await loadMe();
+      await loadMe({expectedAccountId:r.accountId||r.user?.accountId||''});
       return r;
     }
     function openAccountReloginModal(acc){
@@ -1463,6 +1511,8 @@
       setTimeout(()=>$('#quickSwitchPassword')?.focus(),80);
     }
     async function switchToSavedAccount(acc, btn){
+      const transitionVersion=beginAccountTransition();
+      try{
       const previousToken=state.token;
       const previousSwitchKey=state.switchKey;
       const previousAccountId=state.accountId;
@@ -1475,7 +1525,8 @@
           state.switchKey=acc.switchKey||'';
           localStorage.setItem('courseTableUserToken',state.token);
           if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
-          await loadMe();
+          const loaded=await loadMe({expectedAccountId:acc.accountId||''});
+          if(!loaded) return;
           closeModal();
           toast('已切换到 '+(state.user?.name||acc.name||acc.username));
           return;
@@ -1490,7 +1541,8 @@
           state.switchKey=r.switchKey||acc.switchKey||'';
           localStorage.setItem('courseTableUserToken',state.token);
           if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
-          await loadMe();
+          const loaded=await loadMe({expectedAccountId:acc.accountId||r.accountId||''});
+          if(!loaded) return;
           closeModal();
           toast('已切换到 '+(state.user?.name||acc.name||acc.username));
           return;
@@ -1510,6 +1562,10 @@
         return openAccountReloginModal(acc);
       }
       toast(tokenError?.message||'切换失败');
+      return;
+      }finally{
+        endAccountTransition(transitionVersion);
+      }
     }
     
     function removeSavedAccount(identity){ setSavedAccounts(getSavedAccounts().filter(x=>x.accountId!==identity&&x.username!==identity)); }
@@ -1704,11 +1760,11 @@
       if(pref.infoMode) state.infoMode=pref.infoMode;
       if(typeof pref.bottomToolbarHidden==='boolean'){
         state.bottomToolbarHidden=!!pref.bottomToolbarHidden;
-        localStorage.setItem('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
+        saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
         updateBottomToolbar(!!state.user);
       }
       if(pref.tableSize) applyTableSize(pref.tableSize,{width:pref.tableDayWidth,height:pref.tableRowHeight});
-      if(typeof pref.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!pref.hideFifthSlot; localStorage.setItem('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
+      if(typeof pref.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!pref.hideFifthSlot; saveAccountLocal('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
       if(pref.courseSettings){ saveCourseSettings(pref.courseSettings); }
       if(pref.reminderSettings){ saveReminderSettings(pref.reminderSettings); }
       schedulePreferenceSave();
@@ -2124,8 +2180,8 @@
     $$('.theme-btn').forEach(b=>b.onclick=()=>{applyTheme(b.dataset.theme); renderAll(); schedulePreferenceSave(); toast('已切换配色：'+b.textContent.trim().split(' ')[0]);});
     $$('[data-feature-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.featureAction));
     $$('.mobile-bottom-tool[data-bottom-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.bottomAction));
-    $('#loginBtn').onclick=async()=>{ try{ const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#loginUsername').value.trim(),password:$('#loginPassword').value})}); state.token=r.token; localStorage.setItem('courseTableUserToken',state.token); await loadMe(); toast('登录成功'); }catch(e){ toast(e.message); } };
-    $('#registerBtn').onclick=async()=>{ try{ const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name:$('#registerName').value.trim(),username:$('#registerUsername').value.trim(),password:$('#registerPassword').value})}); state.token=r.token; localStorage.setItem('courseTableUserToken',state.token); await loadMe(); toast('注册并登录成功'); }catch(e){ toast(e.message); } };
+    $('#loginBtn').onclick=async()=>{ try{ await loginAndLoad($('#loginUsername').value.trim(),$('#loginPassword').value); toast('登录成功'); }catch(e){ toast(e.message); } };
+    $('#registerBtn').onclick=async()=>{ try{ const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name:$('#registerName').value.trim(),username:$('#registerUsername').value.trim(),password:$('#registerPassword').value})}); state.token=r.token; state.switchKey=r.switchKey||r.user?.switchKey||''; localStorage.setItem('courseTableUserToken',state.token); await loadMe({expectedAccountId:r.accountId||r.user?.accountId||''}); toast('注册并登录成功'); }catch(e){ toast(e.message); } };
     $('#logoutBtn').onclick=async()=>{ rememberCurrentAccount(); state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); resetToLoggedOut(); toast('已在本机退出，已保存账号仍可快速切换'); };
     $('#refreshBtn').onclick=async()=>{ 
   try{ 
@@ -2393,8 +2449,10 @@ $('#helpBtnAuth').onclick = openHelpModal;
     // 这样不依赖用户切换焦点，导入成功后课表页会立刻拉取最新数据。
     window.addEventListener('xiaode-import-success', async (ev) => {
       try{
-        await loadMe();
         const d = ev.detail || window.__xiaodeLastImportSummary || {};
+        if(d.accountId && d.accountId!==state.accountId) return;
+        const accountAtStart=state.accountId;
+        await loadMe({expectedAccountId:accountAtStart});
         const saved = d.savedCount ?? d.count ?? '';
         syncWidgetNow('import-success');
         toast(saved !== '' ? `教务导入成功，已更新 ${saved} 条课程` : '教务导入成功，课表已刷新');
@@ -2413,7 +2471,8 @@ $('#helpBtnAuth').onclick = openHelpModal;
       if(now - lastAutoRefreshAt < 3000) return;
       lastAutoRefreshAt = now;
       try{
-        await loadMe();
+        const accountAtStart=state.accountId;
+        await loadMe({expectedAccountId:accountAtStart});
         console.log('课表已自动刷新：', reason);
       }catch(e){
         console.warn('自动刷新失败：', e);
