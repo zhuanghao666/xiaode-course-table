@@ -2,3 +2,7 @@ node_modules/
 .env
 data/db.json.backup-*
 data/db.json.*.tmp
+data/db.json.*.restore.tmp
+data/db.json.*.replaced.bak
+*.sql
+*.dump
