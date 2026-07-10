@@ -1,12 +1,22 @@
 import mysql from 'mysql2/promise';
 
+const RETRY_COOLDOWN_MS = Math.max(1000, Number(process.env.MYSQL_RETRY_COOLDOWN_MS || 5000));
+const APP_STATE_TABLE = 'app_state';
+
 let pool = null;
-let syncChain = Promise.resolve();
+let schemaReady = false;
+let pendingSnapshot = null;
+let syncWorker = null;
+let retryTimer = null;
+let nextRetryAt = 0;
 let status = {
-  enabled: false,
-  driver: 'mysql',
+  enabled: true,
+  connected: false,
   ok: false,
-  message: 'MySQL 尚未初始化'
+  lastAttemptAt: null,
+  lastSyncedAt: null,
+  lastError: null,
+  message: 'MySQL 镜像尚未初始化'
 };
 
 function clone(value) {
@@ -22,6 +32,10 @@ function databaseName() {
   return env('MYSQL_DATABASE', env('DB_NAME', 'xiaode_course_table'));
 }
 
+function quoteIdentifier(value) {
+  return `\`${String(value).replaceAll('`', '``')}\``;
+}
+
 function mysqlConfig(withDatabase = true) {
   const cfg = {
     host: env('MYSQL_HOST', env('DB_HOST', '127.0.0.1')),
@@ -30,6 +44,7 @@ function mysqlConfig(withDatabase = true) {
     password: env('MYSQL_PASSWORD', env('DB_PASSWORD', '')),
     waitForConnections: true,
     connectionLimit: Number(env('MYSQL_CONNECTION_LIMIT', '10')),
+    connectTimeout: Number(env('MYSQL_CONNECT_TIMEOUT_MS', '3000')),
     charset: 'utf8mb4'
   };
   if (withDatabase) cfg.database = databaseName();
@@ -37,29 +52,190 @@ function mysqlConfig(withDatabase = true) {
 }
 
 export function getMysqlStatus() {
-  return { ...status };
+  return clone(status);
+}
+
+function errorMessage(err) {
+  return String(err?.message || err || '未知 MySQL 错误');
+}
+
+function recordFailure(err, message = 'MySQL 镜像同步失败，db.json 不受影响') {
+  const now = new Date().toISOString();
+  status = {
+    ...status,
+    enabled: true,
+    ok: false,
+    lastError: errorMessage(err),
+    lastErrorAt: now,
+    message
+  };
+  nextRetryAt = Date.now() + RETRY_COOLDOWN_MS;
+}
+
+function isConnectionError(err) {
+  return [
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EPIPE',
+    'PROTOCOL_CONNECTION_LOST',
+    'ER_ACCESS_DENIED_ERROR',
+    'ER_DBACCESS_DENIED_ERROR'
+  ].includes(err?.code);
+}
+
+async function closePool() {
+  const oldPool = pool;
+  pool = null;
+  schemaReady = false;
+  if (oldPool) await oldPool.end().catch(() => {});
 }
 
 async function ensureDatabase() {
-  const dbName = databaseName();
   const bootstrap = await mysql.createConnection(mysqlConfig(false));
   try {
     await bootstrap.query(
-      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      `CREATE DATABASE IF NOT EXISTS ${quoteIdentifier(databaseName())} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
   } finally {
     await bootstrap.end();
   }
 }
 
-async function ensureTables(conn) {
+async function tableExists(conn, tableName) {
+  const [rows] = await conn.query(
+    `SELECT 1
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+      LIMIT 1`,
+    [databaseName(), tableName]
+  );
+  return rows.length > 0;
+}
+
+async function tableColumns(conn, tableName) {
+  const [rows] = await conn.query(
+    `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+      ORDER BY ORDINAL_POSITION`,
+    [databaseName(), tableName]
+  );
+  return rows;
+}
+
+async function hasUniqueStateKey(conn) {
+  const [rows] = await conn.query(
+    `SELECT 1
+       FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+        AND COLUMN_NAME = 'state_key' AND NON_UNIQUE = 0
+      LIMIT 1`,
+    [databaseName(), APP_STATE_TABLE]
+  );
+  return rows.length > 0;
+}
+
+async function createAppStateTable(conn, tableName = APP_STATE_TABLE) {
   await conn.query(`
-    CREATE TABLE IF NOT EXISTS app_state (
-      state_key VARCHAR(64) PRIMARY KEY,
+    CREATE TABLE ${quoteIdentifier(tableName)} (
+      state_key VARCHAR(64) NOT NULL PRIMARY KEY,
       state_json LONGTEXT NOT NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+}
+
+function migrationSuffix() {
+  const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  return `${stamp}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function rebuildLegacyAppState(conn, columns) {
+  const suffix = migrationSuffix();
+  const tempTable = `app_state_migrating_${suffix}`;
+  let backupTable = `app_state_legacy_${suffix}`;
+  while (await tableExists(conn, backupTable)) backupTable = `app_state_legacy_${migrationSuffix()}`;
+
+  const names = new Map(columns.map((column) => [String(column.COLUMN_NAME).toLowerCase(), column.COLUMN_NAME]));
+  const keyColumn = names.get('state_key') || names.get('id') || names.get('key') || names.get('name');
+  const jsonColumn = names.get('state_json') || names.get('data') || names.get('json') || names.get('value');
+
+  try {
+    await createAppStateTable(conn, tempTable);
+    if (jsonColumn) {
+      const keyExpression = keyColumn
+        ? `CASE WHEN ${quoteIdentifier(keyColumn)} IS NULL OR TRIM(CAST(${quoteIdentifier(keyColumn)} AS CHAR)) = '' THEN CONCAT('legacy-', REPLACE(UUID(), '-', '')) ELSE LEFT(CAST(${quoteIdentifier(keyColumn)} AS CHAR), 64) END`
+        : `CONCAT('legacy-', REPLACE(UUID(), '-', ''))`;
+      await conn.query(
+        `INSERT IGNORE INTO ${quoteIdentifier(tempTable)} (state_key, state_json, updated_at)
+         SELECT ${keyExpression}, COALESCE(CAST(${quoteIdentifier(jsonColumn)} AS CHAR), '{}'), CURRENT_TIMESTAMP
+           FROM ${quoteIdentifier(APP_STATE_TABLE)}`
+      );
+    }
+    // RENAME TABLE 是原子的；旧表完整保留，任何无法识别的数据仍可从 legacy 表恢复。
+    await conn.query(
+      `RENAME TABLE ${quoteIdentifier(APP_STATE_TABLE)} TO ${quoteIdentifier(backupTable)}, ${quoteIdentifier(tempTable)} TO ${quoteIdentifier(APP_STATE_TABLE)}`
+    );
+    status = {
+      ...status,
+      migration: {
+        appState: 'rebuilt',
+        legacyTable: backupTable,
+        migratedRecognizedData: Boolean(jsonColumn)
+      }
+    };
+  } catch (err) {
+    if (await tableExists(conn, tempTable).catch(() => false)) {
+      await conn.query(`DROP TABLE ${quoteIdentifier(tempTable)}`).catch(() => {});
+    }
+    throw err;
+  }
+}
+
+async function ensureAppStateTable(conn) {
+  if (!(await tableExists(conn, APP_STATE_TABLE))) {
+    await createAppStateTable(conn);
+    status = { ...status, migration: { appState: 'created' } };
+    return;
+  }
+
+  let columns = await tableColumns(conn, APP_STATE_TABLE);
+  const names = new Set(columns.map((column) => String(column.COLUMN_NAME).toLowerCase()));
+
+  if (names.has('state_key') && names.has('state_json') && !names.has('updated_at')) {
+    await conn.query(
+      `ALTER TABLE ${quoteIdentifier(APP_STATE_TABLE)} ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`
+    );
+    columns = await tableColumns(conn, APP_STATE_TABLE);
+    names.add('updated_at');
+  }
+
+  const required = new Set(['state_key', 'state_json', 'updated_at']);
+  const hasRequired = [...required].every((name) => names.has(name));
+  const uniqueStateKey = hasRequired && await hasUniqueStateKey(conn);
+  const stateKeyColumn = columns.find((column) => String(column.COLUMN_NAME).toLowerCase() === 'state_key');
+  const stateJsonColumn = columns.find((column) => String(column.COLUMN_NAME).toLowerCase() === 'state_json');
+  const compatibleTypes = (!stateKeyColumn || ['char', 'varchar'].includes(String(stateKeyColumn.DATA_TYPE).toLowerCase()))
+    && (!stateJsonColumn || ['text', 'mediumtext', 'longtext', 'json'].includes(String(stateJsonColumn.DATA_TYPE).toLowerCase()));
+  const blockingExtraColumn = columns.some((column) => {
+    const name = String(column.COLUMN_NAME).toLowerCase();
+    return !required.has(name)
+      && column.IS_NULLABLE === 'NO'
+      && column.COLUMN_DEFAULT === null
+      && !String(column.EXTRA || '').toLowerCase().includes('auto_increment');
+  });
+
+  if (!hasRequired || !uniqueStateKey || !compatibleTypes || blockingExtraColumn) {
+    await rebuildLegacyAppState(conn, columns);
+  } else if (!status.migration) {
+    status = { ...status, migration: { appState: 'compatible' } };
+  }
+}
+
+async function ensureTables(conn) {
+  await ensureAppStateTable(conn);
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -208,13 +384,46 @@ async function ensureTables(conn) {
   `);
 }
 
-async function readStateFromMysql() {
-  const [rows] = await pool.query('SELECT state_json FROM app_state WHERE state_key = ?', ['main']);
-  if (!rows.length) return null;
+async function openConfiguredPool() {
+  pool = mysql.createPool(mysqlConfig(true));
   try {
-    return JSON.parse(rows[0].state_json || '{}');
-  } catch {
-    return null;
+    const conn = await pool.getConnection();
+    conn.release();
+  } catch (err) {
+    await closePool();
+    if (err?.code !== 'ER_BAD_DB_ERROR') throw err;
+    await ensureDatabase();
+    pool = mysql.createPool(mysqlConfig(true));
+  }
+}
+
+async function ensureReady() {
+  if (pool && schemaReady) return;
+  status = { ...status, lastAttemptAt: new Date().toISOString(), message: '正在连接并检查 MySQL 镜像结构' };
+  try {
+    if (!pool) await openConfiguredPool();
+    const conn = await pool.getConnection();
+    try {
+      await ensureTables(conn);
+    } finally {
+      conn.release();
+    }
+    schemaReady = true;
+    status = {
+      ...status,
+      enabled: true,
+      connected: true,
+      ok: true,
+      database: databaseName(),
+      lastError: null,
+      initializedAt: status.initializedAt || new Date().toISOString(),
+      message: 'MySQL 镜像结构已就绪，主存储仍为 db.json'
+    };
+  } catch (err) {
+    status = { ...status, connected: false };
+    recordFailure(err, 'MySQL 初始化失败，服务继续使用 db.json');
+    await closePool();
+    throw err;
   }
 }
 
@@ -228,7 +437,7 @@ async function upsertState(conn, db) {
 
 async function clearMirrorTables(conn) {
   const tables = ['users', 'accounts', 'courses', 'settings', 'reminders', 'sessions', 'slots', 'feedbacks', 'import_codes', 'backups'];
-  for (const table of tables) await conn.query(`DELETE FROM \`${table}\``);
+  for (const table of tables) await conn.query(`DELETE FROM ${quoteIdentifier(table)}`);
 }
 
 function j(value) {
@@ -318,22 +527,26 @@ async function insertMirrorRows(conn, db) {
 }
 
 async function syncNow(db) {
-  if (!pool) throw new Error('MySQL 连接池尚未初始化');
   const snapshot = clone(db);
-  const conn = await pool.getConnection();
+  let conn = null;
+  status = { ...status, lastAttemptAt: new Date().toISOString(), message: '正在同步 db.json 快照到 MySQL 镜像' };
   try {
+    await ensureReady();
+    conn = await pool.getConnection();
     await conn.beginTransaction();
     await upsertState(conn, snapshot);
     await clearMirrorTables(conn);
     await insertMirrorRows(conn, snapshot);
     await conn.commit();
+    nextRetryAt = 0;
     status = {
       ...status,
       enabled: true,
+      connected: true,
       ok: true,
-      driver: 'mysql-dual-write',
       database: databaseName(),
       lastSyncedAt: new Date().toISOString(),
+      lastError: null,
       counts: {
         users: snapshot.users?.length || 0,
         accounts: snapshot.accounts?.length || 0,
@@ -341,44 +554,53 @@ async function syncNow(db) {
         settings: snapshot.settings?.length || 0,
         reminders: snapshot.reminders?.length || 0
       },
-      message: 'MySQL 同步正常，同时保留 db.json 回滚备份'
+      message: 'MySQL 镜像同步正常；db.json 是主存储'
     };
   } catch (err) {
-    await conn.rollback().catch(() => {});
-    status = { ...status, ok: false, lastError: String(err?.message || err), lastErrorAt: new Date().toISOString() };
+    if (conn) await conn.rollback().catch(() => {});
+    if (isConnectionError(err)) {
+      status = { ...status, connected: false };
+      await closePool();
+    }
+    recordFailure(err);
     throw err;
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 }
 
-export async function syncMysqlState(db) {
-  const snapshot = clone(db);
-  syncChain = syncChain.then(() => syncNow(snapshot));
-  return syncChain;
+function kickSyncWorker(force = false) {
+  if (syncWorker) return syncWorker;
+  const delay = force ? 0 : Math.max(0, nextRetryAt - Date.now());
+  syncWorker = new Promise((resolve, reject) => {
+    retryTimer = setTimeout(async () => {
+      retryTimer = null;
+      try {
+        // 连续写入只保留并最终同步较新的完整快照，同一时刻只有一个事务。
+        while (pendingSnapshot) {
+          const snapshot = pendingSnapshot;
+          pendingSnapshot = null;
+          await syncNow(snapshot);
+        }
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    }, delay);
+  }).finally(() => {
+    syncWorker = null;
+    if (pendingSnapshot) void kickSyncWorker().catch(() => {});
+  });
+  return syncWorker;
 }
 
-export async function initMysqlState(initialDb, normalizeDb) {
-  await ensureDatabase();
-  pool = mysql.createPool(mysqlConfig(true));
-  const conn = await pool.getConnection();
-  try {
-    await ensureTables(conn);
-  } finally {
-    conn.release();
-  }
+export function syncMysqlState(db, options = {}) {
+  pendingSnapshot = clone(db);
+  return kickSyncWorker(Boolean(options.force));
+}
 
-  const fromMysql = await readStateFromMysql();
-  const db = normalizeDb(fromMysql || initialDb || {});
-  status = {
-    enabled: true,
-    ok: true,
-    driver: 'mysql-dual-write',
-    database: databaseName(),
-    loadedFrom: fromMysql ? 'mysql.app_state' : 'db.json',
-    initializedAt: new Date().toISOString(),
-    message: fromMysql ? '已从 MySQL 读取状态' : 'MySQL 为空，已用 db.json 初始化'
-  };
-  await syncMysqlState(db);
+export async function initMysqlState(initialDb, normalizeDb = (value) => value) {
+  const db = normalizeDb(clone(initialDb || {}));
+  await syncMysqlState(db, { force: true });
   return db;
 }

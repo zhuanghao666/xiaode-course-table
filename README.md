@@ -24,6 +24,19 @@ xiaode-course-table/
 
 ## Web 启动方式
 
+推荐直接在项目根目录运行一键启动脚本。默认安全提示输入 MySQL 密码，密码不会写入文件：
+
+```powershell
+cd C:\work3\xiaode-course-table
+.\start-v39.ps1
+```
+
+纯 JSON 模式：
+
+```powershell
+.\start-v39.ps1 -JsonOnly
+```
+
 默认使用 `db.json` 本地文件模式：
 
 ```powershell
@@ -46,8 +59,15 @@ http://localhost:3001
 
 健康检查：
 
-```text
-http://localhost:3001/api/health
+```powershell
+.\health-v39.ps1
+```
+
+备份和恢复唯一主存储 `db.json`：
+
+```powershell
+.\backup-v39.ps1 -Label before-change
+.\restore-v39.ps1 -BackupFile 'C:\work3\xiaode-course-table\backups\v39\db-时间-before-change.json'
 ```
 
 ## Android 打包方式
@@ -77,9 +97,9 @@ web/backend/data/db.json
 
 该文件保存本地课程、账号、会话等运行数据。它可能包含真实个人数据，因此已被 `.gitignore` 忽略，不应该提交到 GitHub。
 
-## MySQL 本地测试模式
+## MySQL 镜像模式
 
-v39 支持本地 MySQL 双写测试。开启后，后端会保留 `db.json` 作为本地回退文件，同时把状态同步到 MySQL。
+v39 始终以 `db.json` 为事实来源。开启 MySQL 后，后端会把成功落盘的完整 JSON 快照异步镜像到 MySQL；MySQL 数据不会在启动时覆盖本地 JSON。
 
 详见：
 

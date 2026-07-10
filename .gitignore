@@ -1,6 +1,8 @@
 # Node / Web
 node_modules/
 .env
+backups/
+*.restore.tmp
 .env.*
 npm-debug.log*
 yarn-debug.log*
@@ -33,3 +35,5 @@ captures/
 # System
 .DS_Store
 Thumbs.db
+node_modules/
+.env

@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "mysql:test": "node src/mysql-test.js",
+    "mysql:init": "node src/mysql-init.js",
+    "mysql:import-json": "node src/mysql-import-json.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
-    "mysql2": "^3.11.5"
+    "mysql2": "^3.22.6"
   }
 }

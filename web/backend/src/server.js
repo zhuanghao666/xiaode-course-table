@@ -13,16 +13,39 @@ const PORT = process.env.PORT || 3001;
 const APP_VERSION = 'v39-mysql-local-test';
 const DB_SCHEMA_VERSION = 3;
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
+const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
 let runtimeDbCache = null;
 let mysqlSyncState = null;
-let mysqlStorageStatus = { enabled: false, driver: 'json', ok: true, message: '使用 db.json 本地存储' };
+let mysqlStatusReader = null;
+let mysqlStorageStatus = {
+  enabled: MYSQL_MIRROR_ENABLED,
+  connected: false,
+  ok: !MYSQL_MIRROR_ENABLED,
+  lastAttemptAt: null,
+  lastSyncedAt: null,
+  lastError: null,
+  message: MYSQL_MIRROR_ENABLED ? 'MySQL 镜像等待初始化' : 'MySQL 镜像未启用'
+};
+
+function currentMysqlStorageStatus() {
+  return mysqlStatusReader ? mysqlStatusReader() : { ...mysqlStorageStatus };
+}
 
 function cloneDb(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
 
 function writeJsonFileOnly(db) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), 'utf8');
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+  const tempFile = `${DATA_FILE}.${process.pid}.tmp`;
+  const fd = fs.openSync(tempFile, 'w');
+  try {
+    fs.writeFileSync(fd, JSON.stringify(db, null, 2), 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tempFile, DATA_FILE);
 }
 
 const DEFAULT_12_SLOTS = [
@@ -58,13 +81,13 @@ function readDb() {
 function writeDb(db) {
   const normalized = migrateDbToV38(db || {});
   normalized.meta.lastUpdated = new Date().toISOString();
-  normalized.meta.storageDriver = mysqlSyncState ? 'mysql-dual-write' : 'json';
+  normalized.meta.storageDriver = 'json';
   runtimeDbCache = cloneDb(normalized);
+  // db.json 永远先同步、原子落盘；MySQL 仅在成功后异步镜像。
   writeJsonFileOnly(normalized);
   if (mysqlSyncState) {
     mysqlSyncState(normalized).catch((err) => {
-      mysqlStorageStatus = { ...mysqlStorageStatus, ok: false, lastError: String(err?.message || err), lastErrorAt: new Date().toISOString() };
-      console.error('[mysql-sync] 同步失败：', err);
+      console.error('[mysql-mirror] 后台同步失败，JSON 已保存：', String(err?.message || err));
     });
   }
 }
@@ -165,8 +188,9 @@ function migrateDbToV38(input = {}) {
   db.meta = db.meta && typeof db.meta === 'object' && !Array.isArray(db.meta) ? db.meta : {};
   db.meta.appVersion = APP_VERSION;
   db.meta.schemaVersion = DB_SCHEMA_VERSION;
-  db.meta.storageMode = mysqlSyncState ? 'mysql-dual-write-v39' : 'json-relational-v39';
-  db.meta.schemaNote = 'v39 支持本地 MySQL 双写/读取测试，同时保留 db.json 作为回滚备份。';
+  db.meta.storageMode = MYSQL_MIRROR_ENABLED ? 'json-primary-mysql-mirror-v39' : 'json-relational-v39';
+  db.meta.storageDriver = 'json';
+  db.meta.schemaNote = 'v39 以 db.json 为主存储和事实来源，MySQL 仅用于异步镜像与迁移测试。';
 
   if (!Array.isArray(db.slots) || db.slots.length < 12) db.slots = DEFAULT_12_SLOTS;
   db.slots = normalizeSlotsInput(db.slots, DEFAULT_12_SLOTS);
@@ -738,7 +762,16 @@ function requireAdmin(req, res, next) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, service: 'xiaode-course-table', version: APP_VERSION, storage: mysqlStorageStatus, time: new Date().toISOString() });
+  res.json({
+    ok: true,
+    service: 'xiaode-course-table',
+    version: APP_VERSION,
+    storage: {
+      primary: 'db.json',
+      mysqlMirror: currentMysqlStorageStatus()
+    },
+    time: new Date().toISOString()
+  });
 });
 
 app.get('/api/public/bootstrap', (req, res) => {
@@ -1424,7 +1457,10 @@ app.get('/api/admin/storage', requireAdmin, (req, res) => {
     ok: true,
     appVersion: APP_VERSION,
     configuredDriver: STORAGE_DRIVER,
-    storage: mysqlStorageStatus,
+    storage: {
+      primary: 'db.json',
+      mysqlMirror: currentMysqlStorageStatus()
+    },
     dataFile: DATA_FILE
   });
 });
@@ -1433,9 +1469,9 @@ app.post('/api/admin/mysql-sync-now', requireAdmin, async (req, res) => {
   if (!mysqlSyncState) return res.status(400).json({ ok: false, message: '当前没有启用 MySQL，同步开关是 XIAODE_STORAGE=mysql' });
   try {
     await mysqlSyncState(readDb());
-    res.json({ ok: true, storage: mysqlStorageStatus });
+    res.json({ ok: true, storage: currentMysqlStorageStatus() });
   } catch (err) {
-    res.status(500).json({ ok: false, message: String(err?.message || err), storage: mysqlStorageStatus });
+    res.status(500).json({ ok: false, message: String(err?.message || err), storage: currentMysqlStorageStatus() });
   }
 });
 
@@ -1493,37 +1529,35 @@ app.get('*', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
 
 async function initStorageAndStart() {
   const localDb = readDb();
-  if (STORAGE_DRIVER === 'mysql') {
-    try {
-      const mysqlStore = await import('./mysql-store.js');
-      const loadedDb = await mysqlStore.initMysqlState(localDb, migrateDbToV38);
-      mysqlSyncState = async (db) => {
-        await mysqlStore.syncMysqlState(migrateDbToV38(db));
-        mysqlStorageStatus = mysqlStore.getMysqlStatus();
-      };
-      runtimeDbCache = cloneDb(migrateDbToV38(loadedDb));
-      runtimeDbCache.meta.storageMode = 'mysql-dual-write-v39';
-      runtimeDbCache.meta.storageDriver = 'mysql-dual-write';
-      runtimeDbCache.meta.lastLoadedFromMysqlAt = new Date().toISOString();
-      writeJsonFileOnly(runtimeDbCache);
-      await mysqlSyncState(runtimeDbCache);
-      mysqlStorageStatus = mysqlStore.getMysqlStatus();
-      console.log('[storage] 已启用 MySQL 双写/读取测试模式。');
-    } catch (err) {
-      mysqlStorageStatus = { enabled: false, driver: 'json-fallback', ok: false, lastError: String(err?.message || err), message: 'MySQL 初始化失败，已回退到 db.json' };
-      mysqlSyncState = null;
-      console.error('[storage] MySQL 初始化失败，回退到 db.json：', err);
-    }
-  } else {
-    runtimeDbCache = cloneDb(localDb);
-    writeJsonFileOnly(localDb);
-  }
+  runtimeDbCache = cloneDb(migrateDbToV38(localDb));
+  writeJsonFileOnly(runtimeDbCache);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`小德课表 running at http://localhost:${PORT}`);
     console.log(`局域网访问：请用本机 IPv4 地址访问 http://本机IP:${PORT}`);
-    console.log(`存储模式：${mysqlSyncState ? 'MySQL 双写测试' : 'db.json 本地文件'}`);
+    console.log(`主存储：db.json；MySQL 镜像：${MYSQL_MIRROR_ENABLED ? '已启用' : '未启用'}`);
   });
+
+  if (MYSQL_MIRROR_ENABLED) {
+    try {
+      const mysqlStore = await import('./mysql-store.js');
+      mysqlStatusReader = mysqlStore.getMysqlStatus;
+      mysqlStorageStatus = mysqlStore.getMysqlStatus();
+      mysqlSyncState = async (db, options) => {
+        try {
+          await mysqlStore.syncMysqlState(migrateDbToV38(cloneDb(db)), options);
+        } finally {
+          mysqlStorageStatus = mysqlStore.getMysqlStatus();
+        }
+      };
+      // 启动只把本地快照推向 MySQL，绝不从 MySQL 回灌 db.json。
+      await mysqlSyncState(runtimeDbCache, { force: true });
+      console.log('[storage] MySQL 镜像初始化并同步成功。');
+    } catch (err) {
+      // 保留同步函数，后续 writeDb 会按冷却策略重新连接，服务始终继续使用 JSON。
+      console.error('[storage] MySQL 镜像初始化失败，继续使用 db.json：', String(err?.message || err));
+    }
+  }
 }
 
 await initStorageAndStart();

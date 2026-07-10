@@ -1,0 +1,4 @@
+node_modules/
+.env
+data/db.json.backup-*
+data/db.json.*.tmp
