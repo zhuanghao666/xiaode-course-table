@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -12,7 +13,7 @@ const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FIL
   : path.join(__dirname, '..', 'data', 'db.json');
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = 'v39-mysql-local-test';
+const APP_VERSION = 'v39';
 const DB_SCHEMA_VERSION = 4;
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
 const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
@@ -243,16 +244,52 @@ function migrateDbToV38(input = {}) {
   }
   db.accounts = [...accountMap.values()].filter((account) => account && account.id && userIds.has(account.userId));
 
+  const accountIdsByUser = new Map();
+  const accountOwners = new Map();
+  for (const account of db.accounts) {
+    accountOwners.set(account.id, account.userId);
+    const ids = accountIdsByUser.get(account.userId) || [];
+    ids.push(account.id);
+    accountIdsByUser.set(account.userId, ids);
+  }
+  const migrationWarnings = new Map();
+  function warnUnresolved(entityType, entity, message) {
+    const id = String(entity?.id || entity?.token || entity?.code || 'unknown');
+    const warning = { code: 'ACCOUNT_SCOPE_UNRESOLVED', entityType, id, message };
+    migrationWarnings.set(`${warning.code}:${entityType}:${id}`, warning);
+  }
+  function resolveLegacyScope(entityType, entity) {
+    if (!entity || typeof entity !== 'object') return entity;
+    const scoped = { ...entity };
+    const owner = scoped.accountId ? accountOwners.get(scoped.accountId) : '';
+    if (scoped.accountId && !scoped.userId && owner) scoped.userId = owner;
+    if (!scoped.accountId && scoped.userId) {
+      const candidates = accountIdsByUser.get(scoped.userId) || [];
+      if (candidates.length === 1) scoped.accountId = candidates[0];
+      else warnUnresolved(entityType, scoped, `userId ${scoped.userId} cannot be mapped to exactly one accountId`);
+    }
+    if (!scoped.accountId || !scoped.userId || accountOwners.get(scoped.accountId) !== scoped.userId) {
+      warnUnresolved(entityType, scoped, 'accountId and userId ownership could not be verified');
+    }
+    return scoped;
+  }
+
   const settingMap = new Map();
+  const unresolvedSettings = [];
   if (Array.isArray(db.settings)) {
-    for (const setting of db.settings) {
-      if (setting && typeof setting === 'object' && setting.accountId) settingMap.set(setting.accountId, setting);
+    for (const rawSetting of db.settings) {
+      const setting = resolveLegacyScope('setting', rawSetting);
+      if (setting && accountOwners.get(setting.accountId) === setting.userId) settingMap.set(setting.accountId, setting);
+      else if (setting && typeof setting === 'object') unresolvedSettings.push(setting);
     }
   }
   const reminderMap = new Map();
+  const unresolvedReminders = [];
   if (Array.isArray(db.reminders)) {
-    for (const reminder of db.reminders) {
-      if (reminder && typeof reminder === 'object' && reminder.accountId) reminderMap.set(reminder.accountId, reminder);
+    for (const rawReminder of db.reminders) {
+      const reminder = resolveLegacyScope('reminder', rawReminder);
+      if (reminder && accountOwners.get(reminder.accountId) === reminder.userId) reminderMap.set(reminder.accountId, reminder);
+      else if (reminder && typeof reminder === 'object') unresolvedReminders.push(reminder);
     }
   }
   for (const user of db.users) {
@@ -289,30 +326,23 @@ function migrateDbToV38(input = {}) {
       updatedAt: reminder.updatedAt || now
     });
   }
-  const validAccountIds = new Set(db.accounts.map((account) => account.id));
-  db.settings = [...settingMap.values()].filter((setting) => setting && userIds.has(setting.userId) && validAccountIds.has(setting.accountId));
-  db.reminders = [...reminderMap.values()].filter((reminder) => reminder && userIds.has(reminder.userId) && validAccountIds.has(reminder.accountId));
+  db.settings = [...settingMap.values(), ...unresolvedSettings]
+    .filter((setting) => setting && typeof setting === 'object');
+  db.reminders = [...reminderMap.values(), ...unresolvedReminders]
+    .filter((reminder) => reminder && typeof reminder === 'object');
 
   db.courses = db.courses
     .filter((course) => course && typeof course === 'object')
-    .map((course) => {
-      const userId = course.userId || course.accountId || '';
-      const accountId = course.accountId || userId;
-      return { ...course, userId, accountId };
-    });
+    .map((course) => resolveLegacyScope('course', course));
 
   db.sessions = db.sessions
     .filter((session) => session && typeof session === 'object' && session.token)
-    .map((session) => ({ ...session, accountId: session.accountId || session.userId || '' }));
+    .map((session) => resolveLegacyScope('session', session));
 
-  db.feedbacks = db.feedbacks.map((feedback) => ({
-    ...(feedback || {}),
-    accountId: feedback?.accountId || feedback?.userId || ''
-  }));
-  db.importCodes = db.importCodes.map((item) => ({
-    ...(item || {}),
-    accountId: item?.accountId || item?.userId || ''
-  }));
+  db.feedbacks = db.feedbacks.map((feedback) => resolveLegacyScope('feedback', feedback));
+  db.importCodes = db.importCodes.map((item) => resolveLegacyScope('importCode', item));
+  db.backups = db.backups.map((backup) => resolveLegacyScope('backup', backup));
+  db.meta.migrationWarnings = [...migrationWarnings.values()];
   return db;
 }
 
@@ -780,6 +810,15 @@ function authUser(req) {
 function requireLogin(req, res, next) {
   const info = authUser(req);
   if (!info) return res.status(401).json({ ok: false, message: '请先登录' });
+  // 普通接口的数据范围只来自已验证会话；客户端字段仅用于一致性校验。
+  const requestedAccountId = req.body?.accountId ?? req.query?.accountId;
+  const requestedUserId = req.body?.userId ?? req.query?.userId;
+  if (requestedAccountId !== undefined && String(requestedAccountId) !== info.accountId) {
+    return res.status(403).json({ ok: false, message: '请求 accountId 与当前会话不一致' });
+  }
+  if (requestedUserId !== undefined && String(requestedUserId) !== info.user.id) {
+    return res.status(403).json({ ok: false, message: '请求 userId 与当前会话不一致' });
+  }
   req.auth = info;
   next();
 }
@@ -792,12 +831,22 @@ function requireAdmin(req, res, next) {
 }
 
 app.get('/api/health', (req, res) => {
+  const db = readDb();
+  const primaryCounts = {
+    users: db.users?.length || 0,
+    accounts: db.accounts?.length || 0,
+    courses: db.courses?.length || 0,
+    settings: db.settings?.length || 0,
+    reminders: db.reminders?.length || 0
+  };
   res.json({
     ok: true,
     service: 'xiaode-course-table',
     version: APP_VERSION,
     storage: {
       primary: 'db.json',
+      primaryCounts,
+      primaryMigrationWarnings: db.meta?.migrationWarnings || [],
       mysqlMirror: currentMysqlStorageStatus()
     },
     time: new Date().toISOString()
@@ -1299,6 +1348,7 @@ app.post('/api/my/import-code', requireLogin, (req, res) => {
     code,
     userId: req.auth.user.id,
     accountId: req.auth.accountId,
+    sessionTokenHash: crypto.createHash('sha256').update(req.auth.token).digest('hex'),
     username: req.auth.user.username,
     replace: Boolean(replace),
     xnm: String(xnm || '2025'),
