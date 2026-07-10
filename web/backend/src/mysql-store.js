@@ -125,6 +125,30 @@ async function tableColumns(conn, tableName) {
   return rows;
 }
 
+async function recordAppStateMigrationHistory(conn) {
+  const [rows] = await conn.query(
+    `SELECT TABLE_NAME
+       FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME LIKE 'app_state_legacy_%'
+      ORDER BY TABLE_NAME DESC`,
+    [databaseName()]
+  );
+  const legacyTables = rows
+    .map((row) => String(row.TABLE_NAME || ''))
+    .filter((name) => name.startsWith('app_state_legacy_'));
+  if (!legacyTables.length) return;
+  const current = status.migration || {};
+  status = {
+    ...status,
+    migration: {
+      ...current,
+      appState: current.appState === 'rebuilt' ? 'rebuilt' : 'previously-migrated',
+      legacyTable: current.legacyTable || legacyTables[0],
+      legacyTables
+    }
+  };
+}
+
 async function hasUniqueStateKey(conn) {
   const [rows] = await conn.query(
     `SELECT 1
@@ -236,6 +260,7 @@ async function ensureAppStateTable(conn) {
 
 async function ensureTables(conn) {
   await ensureAppStateTable(conn);
+  await recordAppStateMigrationHistory(conn);
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS users (

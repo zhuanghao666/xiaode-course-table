@@ -45,6 +45,7 @@ Write-Host "counts.reminders=$($counts.reminders)"
 Write-Host "accountMigration.warningCount=$(@($health.storage.primaryMigrationWarnings).Count)"
 Write-Host "appState.migration=$($migration.appState)"
 Write-Host "appState.legacyTable=$($migration.legacyTable)"
+Write-Host "appState.legacyTables=$(@($migration.legacyTables) -join ',')"
 Write-Host "message=$($mirror.message)"
 
 if (!$primaryOk) {
