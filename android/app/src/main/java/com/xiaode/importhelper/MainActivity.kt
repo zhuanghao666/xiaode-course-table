@@ -93,7 +93,8 @@ class MainActivity : Activity() {
         val convertedCount: Int,
         val previousCount: Int,
         val replace: Boolean,
-        val importedAt: String
+        val importedAt: String,
+        val accountId: String
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -902,7 +903,8 @@ class MainActivity : Activity() {
                 convertedCount = convertedCount,
                 previousCount = previousCount,
                 replace = upload.optBoolean("replace", replaceCheck.isChecked),
-                importedAt = upload.optString("importedAt", "")
+                importedAt = upload.optString("importedAt", ""),
+                accountId = accountIdForImport
             )
         }) { summary ->
             serverUrl = cleanServer
@@ -910,10 +912,8 @@ class MainActivity : Activity() {
             activeImportCode = ""
             activeImportAccountId = ""
             clearJwxtCookiesSilently()
-            exitImportScreen("导入成功：${summary.message} 已自动返回课表页并刷新。")
+            exitImportScreen("导入成功：${summary.message} 已自动返回课表页；仅在该账号仍为当前账号时刷新。")
             notifyXiaodeWebImportSuccess(summary)
-            requestWidgetSyncFromWeb()
-            safeRefreshXiaodeWeb()
             showImportSuccessDialog(summary)
         }
     }
@@ -921,6 +921,7 @@ class MainActivity : Activity() {
     private fun notifyXiaodeWebImportSuccess(summary: ImportSummary) {
         if (!::appWebView.isInitialized) return
         val detail = JSONObject()
+            .put("accountId", summary.accountId)
             .put("savedCount", summary.savedCount)
             .put("rawCount", summary.rawCount)
             .put("convertedCount", summary.convertedCount)
@@ -932,7 +933,6 @@ class MainActivity : Activity() {
             (function(){
               window.__xiaodeLastImportSummary = $detail;
               window.dispatchEvent(new CustomEvent('xiaode-import-success', { detail: $detail }));
-              if (typeof loadMe === 'function') { try { loadMe(); } catch(e){} }
             })();
         """.trimIndent()
         try { appWebView.evaluateJavascript(script, null) } catch (_: Throwable) {}
