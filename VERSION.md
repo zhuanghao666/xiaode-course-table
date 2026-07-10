@@ -2,7 +2,7 @@
 
 ## v39
 
-本地 MySQL 测试版。默认继续使用 `db.json`，支持通过 `XIAODE_STORAGE=mysql` 开启本地 MySQL 双写测试，并保留 `db.json` 作为回退数据文件。
+稳定镜像与账号隔离版。`db.json` 永远是事实来源，MySQL 仅作可恢复镜像；Web/Android 的课程、设置、提醒、小组件和导入链路统一绑定会话 `accountId`。
 
 ## v38
 

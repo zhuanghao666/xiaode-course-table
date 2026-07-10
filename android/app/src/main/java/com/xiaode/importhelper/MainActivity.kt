@@ -128,6 +128,7 @@ class MainActivity : Activity() {
 
     private var serverUrl: String = ""
     private var activeImportCode: String = ""
+    private var activeImportAccountId: String = ""
     private var isBusy = false
     private var inImportMode = false
     private var lastDiagnostics: String = ""
@@ -408,9 +409,14 @@ class MainActivity : Activity() {
                 try {
                     val json = JSONObject(payload)
                     val code = json.optString("code", "").trim().uppercase()
+                    val accountId = json.optString("accountId", "").trim()
                     val bridgeServer = normalizeServerUrl(json.optString("serverUrl", serverUrl))
                     if (code.length < 6) {
                         setStatus("网页传来的导入码无效，请在网页端重新生成。")
+                        return@post
+                    }
+                    if (accountId.isBlank()) {
+                        setStatus("网页没有传来 accountId，请刷新课表页后重新生成导入码。")
                         return@post
                     }
                     if (bridgeServer.isBlank()) {
@@ -419,6 +425,7 @@ class MainActivity : Activity() {
                     }
                     serverUrl = bridgeServer
                     activeImportCode = code
+                    activeImportAccountId = accountId
                     xnmInput.setText(json.optString("xnm", "2025"))
                     xqmInput.setText(json.optString("xqm", "12"))
                     replaceCheck.isChecked = json.optBoolean("replace", true)
@@ -594,12 +601,15 @@ class MainActivity : Activity() {
     private fun syncCourseRemindersToCalendar(payload: String): JSONObject {
         if (!hasCalendarPermission()) throw IOException("需要先允许日历权限。")
         val json = JSONObject(payload)
+        val accountId = json.optString("accountId", "").trim()
+        if (accountId.isBlank()) throw IOException("提醒数据缺少 accountId。")
         val calendarId = json.optString("calendarId").toLongOrNull() ?: json.optLong("calendarId", -1L)
         if (calendarId <= 0L) throw IOException("没有选择目标日历。")
         val events = json.optJSONArray("events") ?: JSONArray()
         if (events.length() == 0) throw IOException("没有可写入的课程提醒。")
 
-        val deleted = deleteOldXiaodeEvents(calendarId)
+        val accountMarker = "XIAODE_ACCOUNT::$accountId"
+        val deleted = deleteOldXiaodeEvents(calendarId, accountMarker)
         var inserted = 0
         val timezone = TimeZone.getDefault().id
         for (i in 0 until events.length()) {
@@ -611,6 +621,9 @@ class MainActivity : Activity() {
             val title = item.optString("title", "课程提醒").ifBlank { "课程提醒" }.take(120)
             val location = item.optString("location", "")
             var description = item.optString("description", "")
+            if (!description.contains(accountMarker)) {
+                description = description.trim() + "\n$accountMarker"
+            }
             if (!description.contains("XIAODE_REMINDER::")) {
                 val fp = item.optString("fingerprint", "${System.currentTimeMillis()}-$i")
                 description = description.trim() + "\nXIAODE_REMINDER::$fp"
@@ -645,10 +658,22 @@ class MainActivity : Activity() {
             .put("message", "课程提醒已写入系统日历。")
     }
 
-    private fun deleteOldXiaodeEvents(calendarId: Long): Int {
+    private fun deleteOldXiaodeEvents(calendarId: Long, accountMarker: String): Int {
+        val projection = arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DESCRIPTION)
         val selection = "${CalendarContract.Events.CALENDAR_ID}=? AND ${CalendarContract.Events.DESCRIPTION} LIKE ?"
         val args = arrayOf(calendarId.toString(), "%XIAODE_REMINDER::%")
-        return contentResolver.delete(CalendarContract.Events.CONTENT_URI, selection, args)
+        var deleted = 0
+        contentResolver.query(CalendarContract.Events.CONTENT_URI, projection, selection, args, null)?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(CalendarContract.Events._ID)
+            val descriptionIndex = cursor.getColumnIndexOrThrow(CalendarContract.Events.DESCRIPTION)
+            while (cursor.moveToNext()) {
+                val description = cursor.getString(descriptionIndex).orEmpty()
+                if (!description.contains(accountMarker)) continue
+                val eventUri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, cursor.getLong(idIndex))
+                deleted += contentResolver.delete(eventUri, null, null)
+            }
+        }
+        return deleted
     }
 
     private fun openFileChooser(
@@ -835,8 +860,13 @@ class MainActivity : Activity() {
             return
         }
         val codeForImport = activeImportCode.trim().uppercase()
+        val accountIdForImport = activeImportAccountId.trim()
         if (codeForImport.length < 6) {
             setStatus("没有有效导入码。请回到小德课表网页，点击“功能中心 → 教务导入”。")
+            return
+        }
+        if (accountIdForImport.isBlank()) {
+            setStatus("导入上下文缺少 accountId，请回到课表页重新生成导入码。")
             return
         }
 
@@ -855,7 +885,9 @@ class MainActivity : Activity() {
             if (kbList.length() == 0) {
                 throw IOException("已经读到教务 Cookie，但 kbList 为空。请检查是否真正登录成功，以及 xnm=$xnm、xqm=$xqm 是否正确。")
             }
-            val body = JSONObject().put("jwxtData", raw)
+            val body = JSONObject()
+                .put("jwxtData", raw)
+                .put("accountId", accountIdForImport)
             val upload = postJson("$cleanServer/api/import-code/$codeForImport/submit", body)
             if (!upload.optBoolean("ok")) throw IOException(upload.optString("message", "上传失败"))
             val saved = upload.optInt("count", 0)
@@ -876,6 +908,7 @@ class MainActivity : Activity() {
             serverUrl = cleanServer
             saveServer()
             activeImportCode = ""
+            activeImportAccountId = ""
             clearJwxtCookiesSilently()
             exitImportScreen("导入成功：${summary.message} 已自动返回课表页并刷新。")
             notifyXiaodeWebImportSuccess(summary)
@@ -1214,6 +1247,8 @@ class MainActivity : Activity() {
 
     private fun exitImportScreen(message: String) {
         inImportMode = false
+        activeImportCode = ""
+        activeImportAccountId = ""
         try {
             if (::importWebView.isInitialized) {
                 importWebView.stopLoading()

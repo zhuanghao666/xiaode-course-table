@@ -7,11 +7,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.join(__dirname, '..', '..');
-const DATA_FILE = path.join(__dirname, '..', 'data', 'db.json');
+const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FILE
+  ? path.resolve(process.env.XIAODE_DATA_FILE)
+  : path.join(__dirname, '..', 'data', 'db.json');
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
 const APP_VERSION = 'v39-mysql-local-test';
-const DB_SCHEMA_VERSION = 3;
+const DB_SCHEMA_VERSION = 4;
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
 const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
 let runtimeDbCache = null;
@@ -167,6 +169,21 @@ function accountIdForUser(user) {
   return user?.accountId || user?.id || '';
 }
 
+function accountForUser(db, userId, accountId) {
+  return (db.accounts || []).find((account) => account.id === accountId && account.userId === userId) || null;
+}
+
+function publicUser(user, accountId = accountIdForUser(user)) {
+  return {
+    id: user.id,
+    accountId,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    switchKey: user.switchKey
+  };
+}
+
 function createAccountFromUser(user) {
   const accountId = accountIdForUser(user);
   return {
@@ -190,7 +207,7 @@ function migrateDbToV38(input = {}) {
   db.meta.schemaVersion = DB_SCHEMA_VERSION;
   db.meta.storageMode = MYSQL_MIRROR_ENABLED ? 'json-primary-mysql-mirror-v39' : 'json-relational-v39';
   db.meta.storageDriver = 'json';
-  db.meta.schemaNote = 'v39 以 db.json 为主存储和事实来源，MySQL 仅用于异步镜像与迁移测试。';
+  db.meta.schemaNote = 'v39 以 db.json 为主存储，MySQL 仅作镜像；课程、设置、提醒和导入按 accountId 隔离。';
 
   if (!Array.isArray(db.slots) || db.slots.length < 12) db.slots = DEFAULT_12_SLOTS;
   db.slots = normalizeSlotsInput(db.slots, DEFAULT_12_SLOTS);
@@ -241,17 +258,29 @@ function migrateDbToV38(input = {}) {
   for (const user of db.users) {
     if (!user || !user.id) continue;
     const accountId = accountIdForUser(user);
-    const preferences = ensureUserPreferences(user);
+    const legacyPreferences = ensureUserPreferences(user);
     const setting = settingMap.get(accountId) || {};
+    const reminder = reminderMap.get(accountId) || {};
+    const preferences = sanitizePreferences(setting.preferences || legacyPreferences);
+    preferences.reminderSettings = sanitizePreferences({
+      reminderSettings: reminder.settings || preferences.reminderSettings
+    }).reminderSettings;
+    const accountSlots = Array.isArray(setting.slots)
+      ? normalizeSlotsInput(setting.slots, db.slots)
+      : Array.isArray(user.slots)
+        ? normalizeSlotsInput(user.slots, db.slots)
+        : null;
+    user.preferences = preferences;
+    if (accountSlots) user.slots = accountSlots;
+    else delete user.slots;
     settingMap.set(accountId, {
       id: setting.id || `set_${accountId}`,
       accountId,
       userId: user.id,
       preferences,
-      slots: Array.isArray(user.slots) ? normalizeSlotsInput(user.slots, db.slots) : null,
+      slots: accountSlots,
       updatedAt: setting.updatedAt || now
     });
-    const reminder = reminderMap.get(accountId) || {};
     reminderMap.set(accountId, {
       id: reminder.id || `rem_${accountId}`,
       accountId,
@@ -260,8 +289,9 @@ function migrateDbToV38(input = {}) {
       updatedAt: reminder.updatedAt || now
     });
   }
-  db.settings = [...settingMap.values()].filter((setting) => setting && userIds.has(setting.userId));
-  db.reminders = [...reminderMap.values()].filter((reminder) => reminder && userIds.has(reminder.userId));
+  const validAccountIds = new Set(db.accounts.map((account) => account.id));
+  db.settings = [...settingMap.values()].filter((setting) => setting && userIds.has(setting.userId) && validAccountIds.has(setting.accountId));
+  db.reminders = [...reminderMap.values()].filter((reminder) => reminder && userIds.has(reminder.userId) && validAccountIds.has(reminder.accountId));
 
   db.courses = db.courses
     .filter((course) => course && typeof course === 'object')
@@ -286,18 +316,20 @@ function migrateDbToV38(input = {}) {
   return db;
 }
 
-function courseBelongsToUser(course = {}, userId = '') {
-  return course.userId === userId || course.accountId === userId;
+function courseBelongsToAccount(course = {}, accountId = '') {
+  return Boolean(accountId) && course.accountId === accountId;
 }
 
-function coursesForUser(db, userId) {
-  return (Array.isArray(db.courses) ? db.courses : []).filter((course) => courseBelongsToUser(course, userId));
+function coursesForAccount(db, accountId) {
+  return (Array.isArray(db.courses) ? db.courses : []).filter((course) => courseBelongsToAccount(course, accountId));
 }
 
-function removeCoursesForUser(db, userId) {
-  const before = Array.isArray(db.courses) ? db.courses.length : 0;
-  db.courses = (Array.isArray(db.courses) ? db.courses : []).filter((course) => !courseBelongsToUser(course, userId));
-  return before - db.courses.length;
+function settingForAccount(db, userId, accountId) {
+  return (db.settings || []).find((setting) => setting.accountId === accountId && setting.userId === userId) || null;
+}
+
+function reminderForAccount(db, userId, accountId) {
+  return (db.reminders || []).find((reminder) => reminder.accountId === accountId && reminder.userId === userId) || null;
 }
 
 
@@ -428,13 +460,12 @@ function collectJwxtCourseItems(data = {}) {
   return { items, sourceCounts };
 }
 
-function normalizeCourse(input, userId) {
+function normalizeCourse(input, userId, accountId) {
   const weekText = String(input.weekText || '').trim();
-  const accountId = String(input.accountId || userId || '').trim();
   return {
     id: input.id || uid('c'),
     userId,
-    accountId,
+    accountId: String(accountId || '').trim(),
     day: Number(input.day),
     slot: Number(input.slot),
     name: String(input.name || '').trim(),
@@ -464,10 +495,6 @@ function normalizeSlotsInput(slots, fallback = []) {
       end
     };
   }).filter((item) => item.slot && item.label);
-}
-
-function slotsForUser(user = {}, defaultSlots = []) {
-  return normalizeSlotsInput(user.slots, defaultSlots);
 }
 
 function isValidTimeText(value = '') {
@@ -744,7 +771,10 @@ function authUser(req) {
   const session = db.sessions.find((s) => s.token === token);
   if (!session) return null;
   const user = db.users.find((u) => u.id === session.userId);
-  return user ? { user, token } : null;
+  if (!user) return null;
+  const accountId = session.accountId || accountIdForUser(user);
+  const account = accountForUser(db, user.id, accountId);
+  return account ? { user, account, accountId, session, token } : null;
 }
 
 function requireLogin(req, res, next) {
@@ -811,16 +841,18 @@ app.post('/api/auth/register', (req, res) => {
     preferences: sanitizePreferences({}),
     createdAt: new Date().toISOString()
   };
+  user.accountId = accountIdForUser(user);
   db.users.push(user);
   const token = uid('token');
-  db.sessions.push({ token, userId: user.id, createdAt: new Date().toISOString() });
+  db.sessions.push({ token, userId: user.id, accountId: user.accountId, createdAt: new Date().toISOString() });
   writeDb(db);
 
   res.json({
     ok: true,
     token,
     switchKey: user.switchKey,
-    user: { id: user.id, username: user.username, name: user.name, role: user.role, switchKey: user.switchKey }
+    accountId: user.accountId,
+    user: publicUser(user, user.accountId)
   });
 });
 
@@ -835,32 +867,39 @@ app.post('/api/auth/login', (req, res) => {
   }
   const token = uid('token');
   const switchKey = ensureUserSwitchKey(user);
-  db.sessions.push({ token, userId: user.id, createdAt: new Date().toISOString() });
+  const accountId = accountIdForUser(user);
+  db.sessions.push({ token, userId: user.id, accountId, createdAt: new Date().toISOString() });
   writeDb(db);
   res.json({
     ok: true,
     token,
     switchKey,
-    user: { id: user.id, username: user.username, name: user.name, role: user.role, switchKey }
+    accountId,
+    user: publicUser(user, accountId)
   });
 });
 
 app.post('/api/auth/quick-switch', (req, res) => {
-  const { username, switchKey } = req.body || {};
+  const { username, switchKey, accountId: requestedAccountId } = req.body || {};
   const db = readDb();
   const cleanUsername = String(username || '').trim().toLowerCase();
   const user = db.users.find((u) => u.username === cleanUsername);
   if (!user || !user.switchKey || String(user.switchKey) !== String(switchKey || '')) {
     return res.status(401).json({ ok: false, message: '账号切换状态已过期，请重新登录一次' });
   }
+  const accountId = accountIdForUser(user);
+  if (requestedAccountId && String(requestedAccountId) !== accountId) {
+    return res.status(401).json({ ok: false, message: '账号标识不匹配，请重新登录' });
+  }
   const token = uid('token');
-  db.sessions.push({ token, userId: user.id, createdAt: new Date().toISOString(), via: 'quick-switch' });
+  db.sessions.push({ token, userId: user.id, accountId, createdAt: new Date().toISOString(), via: 'quick-switch' });
   writeDb(db);
   res.json({
     ok: true,
     token,
     switchKey: user.switchKey,
-    user: { id: user.id, username: user.username, name: user.name, role: user.role, switchKey: user.switchKey }
+    accountId,
+    user: publicUser(user, accountId)
   });
 });
 
@@ -875,20 +914,17 @@ app.get('/api/auth/me', requireLogin, (req, res) => {
   const db = readDb();
   const user = db.users.find((u) => u.id === req.auth.user.id) || req.auth.user;
   const switchKey = ensureUserSwitchKey(user);
-  const preferences = ensureUserPreferences(user);
+  const setting = settingForAccount(db, user.id, req.auth.accountId);
+  const preferences = sanitizePreferences(setting?.preferences || user.preferences || {});
+  const slots = Array.isArray(setting?.slots) ? normalizeSlotsInput(setting.slots, db.slots) : db.slots;
   if (user && db.users.some((u) => u.id === user.id)) writeDb(db);
   res.json({
     ok: true,
-    user: {
-      id: user.id,
-      username: user.username,
-      name: user.name,
-      role: user.role,
-      switchKey
-    },
+    accountId: req.auth.accountId,
+    user: publicUser(user, req.auth.accountId),
     meta: db.meta,
-    slots: slotsForUser(user, db.slots),
-    courses: coursesForUser(db, user.id),
+    slots,
+    courses: coursesForAccount(db, req.auth.accountId),
     preferences
   });
 });
@@ -914,9 +950,17 @@ app.put('/api/my/preferences', requireLogin, (req, res) => {
   const db = readDb();
   const user = db.users.find((u) => u.id === req.auth.user.id);
   if (!user) return res.status(404).json({ ok: false, message: '账号不存在' });
-  user.preferences = sanitizePreferences(req.body?.preferences || req.body || {});
+  const setting = settingForAccount(db, user.id, req.auth.accountId);
+  const reminder = reminderForAccount(db, user.id, req.auth.accountId);
+  if (!setting || !reminder) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
+  const preferences = sanitizePreferences(req.body?.preferences || req.body || {});
+  setting.preferences = preferences;
+  setting.updatedAt = new Date().toISOString();
+  reminder.settings = preferences.reminderSettings;
+  reminder.updatedAt = setting.updatedAt;
+  if (accountIdForUser(user) === req.auth.accountId) user.preferences = preferences;
   writeDb(db);
-  res.json({ ok: true, preferences: user.preferences });
+  res.json({ ok: true, accountId: req.auth.accountId, preferences });
 });
 
 app.put('/api/my/slots', requireLogin, (req, res) => {
@@ -940,22 +984,31 @@ app.put('/api/my/slots', requireLogin, (req, res) => {
   const db = readDb();
   const user = db.users.find((u) => u.id === req.auth.user.id);
   if (!user) return res.status(404).json({ ok: false, message: '账号不存在' });
-  user.slots = normalized;
+  const setting = settingForAccount(db, user.id, req.auth.accountId);
+  if (!setting) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
+  setting.slots = normalized;
+  setting.updatedAt = new Date().toISOString();
+  if (accountIdForUser(user) === req.auth.accountId) user.slots = normalized;
   writeDb(db);
-  res.json({ ok: true, slots: normalized });
+  res.json({ ok: true, accountId: req.auth.accountId, slots: normalized });
 });
 
 app.delete('/api/my/slots', requireLogin, (req, res) => {
   const db = readDb();
   const user = db.users.find((u) => u.id === req.auth.user.id);
   if (!user) return res.status(404).json({ ok: false, message: '账号不存在' });
-  delete user.slots;
+  const setting = settingForAccount(db, user.id, req.auth.accountId);
+  if (!setting) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
+  setting.slots = null;
+  setting.updatedAt = new Date().toISOString();
+  if (accountIdForUser(user) === req.auth.accountId) delete user.slots;
   writeDb(db);
-  res.json({ ok: true, slots: db.slots });
+  res.json({ ok: true, accountId: req.auth.accountId, slots: db.slots });
 });
 
 
-function buildUserBackup(db, user) {
+function buildUserBackup(db, user, accountId) {
+  const setting = settingForAccount(db, user.id, accountId);
   return {
     app: 'xiaode-course-table',
     appVersion: APP_VERSION,
@@ -966,14 +1019,14 @@ function buildUserBackup(db, user) {
       name: user.name
     },
     account: {
-      id: accountIdForUser(user),
+      id: accountId,
       name: user.name,
       username: user.username
     },
-    preferences: ensureUserPreferences(user),
+    preferences: sanitizePreferences(setting?.preferences || user.preferences || {}),
     meta: db.meta,
-    slots: slotsForUser(user, db.slots),
-    courses: coursesForUser(db, user.id)
+    slots: Array.isArray(setting?.slots) ? normalizeSlotsInput(setting.slots, db.slots) : db.slots,
+    courses: coursesForAccount(db, accountId)
       .map((course) => {
         const { userId, accountId, ...rest } = course;
         return rest;
@@ -999,7 +1052,7 @@ function unpackBackupPayload(input = {}) {
   return { courses, slots };
 }
 
-function normalizeBackupForUser(input, userId, defaultSlots = []) {
+function normalizeBackupForAccount(input, userId, accountId, defaultSlots = []) {
   const { courses, slots } = unpackBackupPayload(input);
   const normalizedCourses = courses
     .map((item) => {
@@ -1007,7 +1060,7 @@ function normalizeBackupForUser(input, userId, defaultSlots = []) {
       delete cloned.id;
       delete cloned.userId;
       delete cloned.accountId;
-      return normalizeCourse(cloned, userId);
+      return normalizeCourse(cloned, userId, accountId);
     })
     .filter((course) => course.name && course.day && course.slot);
   const normalizedSlots = Array.isArray(slots) && slots.length ? normalizeSlotsInput(slots, defaultSlots) : null;
@@ -1016,7 +1069,7 @@ function normalizeBackupForUser(input, userId, defaultSlots = []) {
 
 app.get('/api/my/backup', requireLogin, (req, res) => {
   const db = readDb();
-  res.json({ ok: true, backup: buildUserBackup(db, req.auth.user) });
+  res.json({ ok: true, accountId: req.auth.accountId, backup: buildUserBackup(db, req.auth.user, req.auth.accountId) });
 });
 
 app.post('/api/my/restore', requireLogin, (req, res) => {
@@ -1025,18 +1078,30 @@ app.post('/api/my/restore', requireLogin, (req, res) => {
   const user = db.users.find((u) => u.id === req.auth.user.id);
   if (!user) return res.status(404).json({ ok: false, message: '账号不存在' });
 
-  const normalized = normalizeBackupForUser(backup || req.body, req.auth.user.id, db.slots);
+  const setting = settingForAccount(db, user.id, req.auth.accountId);
+  const reminder = reminderForAccount(db, user.id, req.auth.accountId);
+  if (!setting || !reminder) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
+  const normalized = normalizeBackupForAccount(backup || req.body, user.id, req.auth.accountId, db.slots);
   if (!normalized.courses.length && !normalized.slots) {
     return res.status(400).json({ ok: false, message: '备份文件里没有可恢复的课程或节次时间' });
   }
 
   if (mode === 'replace') {
-    db.courses = db.courses.filter((course) => !courseBelongsToUser(course, req.auth.user.id));
+    db.courses = db.courses.filter((course) => !courseBelongsToAccount(course, req.auth.accountId));
   }
   db.courses = db.courses.concat(normalized.courses);
-  if (normalized.slots) user.slots = normalized.slots;
+  if (normalized.slots) {
+    setting.slots = normalized.slots;
+    if (accountIdForUser(user) === req.auth.accountId) user.slots = normalized.slots;
+  }
   const backupPayload = backup && typeof backup === 'object' ? backup : req.body;
-  if (backupPayload?.preferences || backupPayload?.clientPreferences) user.preferences = sanitizePreferences(backupPayload.preferences || backupPayload.clientPreferences || {});
+  if (backupPayload?.preferences || backupPayload?.clientPreferences) {
+    setting.preferences = sanitizePreferences(backupPayload.preferences || backupPayload.clientPreferences || {});
+    reminder.settings = setting.preferences.reminderSettings;
+    if (accountIdForUser(user) === req.auth.accountId) user.preferences = setting.preferences;
+  }
+  setting.updatedAt = new Date().toISOString();
+  reminder.updatedAt = setting.updatedAt;
   writeDb(db);
   res.json({ ok: true, mode, count: normalized.courses.length, slotsRestored: Boolean(normalized.slots) });
 });
@@ -1047,20 +1112,27 @@ app.post('/api/my/reset', requireLogin, (req, res) => {
   const user = db.users.find((u) => u.id === req.auth.user.id);
   if (!user) return res.status(404).json({ ok: false, message: '账号不存在' });
   const before = db.courses.length;
-  db.courses = db.courses.filter((course) => !courseBelongsToUser(course, req.auth.user.id));
+  db.courses = db.courses.filter((course) => !courseBelongsToAccount(course, req.auth.accountId));
   const count = before - db.courses.length;
-  if (resetSlots) delete user.slots;
+  if (resetSlots) {
+    const setting = settingForAccount(db, user.id, req.auth.accountId);
+    if (setting) {
+      setting.slots = null;
+      setting.updatedAt = new Date().toISOString();
+    }
+    if (accountIdForUser(user) === req.auth.accountId) delete user.slots;
+  }
   writeDb(db);
   res.json({ ok: true, count, resetSlots: Boolean(resetSlots) });
 });
 
 app.get('/api/my/courses', requireLogin, (req, res) => {
   const db = readDb();
-  res.json({ ok: true, courses: coursesForUser(db, req.auth.user.id) });
+  res.json({ ok: true, accountId: req.auth.accountId, courses: coursesForAccount(db, req.auth.accountId) });
 });
 
 app.post('/api/my/courses', requireLogin, (req, res) => {
-  const course = normalizeCourse(req.body || {}, req.auth.user.id);
+  const course = normalizeCourse(req.body || {}, req.auth.user.id, req.auth.accountId);
   if (!course.name || !course.day || !course.slot) {
     return res.status(400).json({ ok: false, message: '课程名、星期、节次必填' });
   }
@@ -1072,11 +1144,11 @@ app.post('/api/my/courses', requireLogin, (req, res) => {
 
 app.put('/api/my/courses/:id', requireLogin, (req, res) => {
   const db = readDb();
-  const idx = db.courses.findIndex((c) => c.id === req.params.id && courseBelongsToUser(c, req.auth.user.id));
+  const idx = db.courses.findIndex((c) => c.id === req.params.id && courseBelongsToAccount(c, req.auth.accountId));
   if (idx === -1) {
     return res.status(404).json({ ok: false, message: '课程不存在或不属于你' });
   }
-  db.courses[idx] = normalizeCourse({ ...db.courses[idx], ...req.body, id: req.params.id }, req.auth.user.id);
+  db.courses[idx] = normalizeCourse({ ...db.courses[idx], ...req.body, id: req.params.id }, req.auth.user.id, req.auth.accountId);
   writeDb(db);
   res.json({ ok: true, course: db.courses[idx] });
 });
@@ -1084,7 +1156,7 @@ app.put('/api/my/courses/:id', requireLogin, (req, res) => {
 app.delete('/api/my/courses', requireLogin, (req, res) => {
   const db = readDb();
   const before = db.courses.length;
-  db.courses = db.courses.filter((c) => !courseBelongsToUser(c, req.auth.user.id));
+  db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, req.auth.accountId));
   const count = before - db.courses.length;
   writeDb(db);
   res.json({ ok: true, count });
@@ -1093,7 +1165,7 @@ app.delete('/api/my/courses', requireLogin, (req, res) => {
 app.delete('/api/my/courses/:id', requireLogin, (req, res) => {
   const db = readDb();
   const before = db.courses.length;
-  db.courses = db.courses.filter((c) => !(c.id === req.params.id && courseBelongsToUser(c, req.auth.user.id)));
+  db.courses = db.courses.filter((c) => !(c.id === req.params.id && courseBelongsToAccount(c, req.auth.accountId)));
   if (db.courses.length === before) {
     return res.status(404).json({ ok: false, message: '课程不存在或不属于你' });
   }
@@ -1108,11 +1180,11 @@ app.post('/api/my/import', requireLogin, (req, res) => {
   }
   const db = readDb();
   const normalized = courses
-    .map((item) => normalizeCourse(item, req.auth.user.id))
+    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId))
     .filter((c) => c.name && c.day && c.slot);
 
   if (replace) {
-    db.courses = db.courses.filter((c) => !courseBelongsToUser(c, req.auth.user.id)).concat(normalized);
+    db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, req.auth.accountId)).concat(normalized);
   } else {
     db.courses = db.courses.concat(normalized);
   }
@@ -1166,7 +1238,7 @@ app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
   }
 
   const normalized = converted
-    .map((item) => normalizeCourse(item, req.auth.user.id))
+    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId))
     .filter((c) => c.name && c.day && c.slot);
 
   if (!normalized.length) {
@@ -1182,15 +1254,16 @@ app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
   }
 
   const db = readDb();
-  const previousCount = coursesForUser(db, req.auth.user.id).length;
+  const previousCount = coursesForAccount(db, req.auth.accountId).length;
   if (replace) {
-    db.courses = db.courses.filter((c) => !courseBelongsToUser(c, req.auth.user.id)).concat(normalized);
+    db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, req.auth.accountId)).concat(normalized);
   } else {
     db.courses = db.courses.concat(normalized);
   }
   const importedAt = new Date().toISOString();
   db.meta.lastAndroidImportAt = importedAt;
   db.meta.lastAndroidImportUserId = req.auth.user.id;
+  db.meta.lastAndroidImportAccountId = req.auth.accountId;
   db.meta.courseVersion = Number(db.meta.courseVersion || 0) + 1;
   writeDb(db);
 
@@ -1225,7 +1298,7 @@ app.post('/api/my/import-code', requireLogin, (req, res) => {
   db.importCodes.unshift({
     code,
     userId: req.auth.user.id,
-    accountId: req.auth.user.id,
+    accountId: req.auth.accountId,
     username: req.auth.user.username,
     replace: Boolean(replace),
     xnm: String(xnm || '2025'),
@@ -1235,7 +1308,7 @@ app.post('/api/my/import-code', requireLogin, (req, res) => {
     usedAt: null
   });
   writeDb(db);
-  res.json({ ok: true, code, expiresAt, replace: Boolean(replace), xnm: String(xnm || '2025'), xqm: String(xqm || '12') });
+  res.json({ ok: true, code, accountId: req.auth.accountId, expiresAt, replace: Boolean(replace), xnm: String(xnm || '2025'), xqm: String(xqm || '12') });
 });
 
 
@@ -1257,6 +1330,7 @@ app.get('/api/import-code/:code', (req, res) => {
   res.json({
     ok: true,
     code: record.code,
+    accountId: record.accountId,
     replace: Boolean(record.replace),
     xnm: String(record.xnm || '2025'),
     xqm: String(record.xqm || '12'),
@@ -1268,7 +1342,7 @@ app.get('/api/import-code/:code', (req, res) => {
 
 app.post('/api/import-code/:code/submit', (req, res) => {
   const code = String(req.params.code || '').trim().toUpperCase();
-  const { jwxtData } = req.body || {};
+  const { jwxtData, accountId: submittedAccountId } = req.body || {};
 
   if (!code) return res.status(400).json({ ok: false, message: '缺少导入码' });
   if (!jwxtData || typeof jwxtData !== 'object') return res.status(400).json({ ok: false, message: '缺少教务系统课表数据' });
@@ -1277,6 +1351,9 @@ app.post('/api/import-code/:code/submit', (req, res) => {
   ensureImportCodes(db);
   const record = db.importCodes.find((item) => item.code === code && !item.usedAt);
   if (!record) return res.status(404).json({ ok: false, message: '导入码不存在、已使用或已过期，请回到小德课表重新生成' });
+  if (submittedAccountId && String(submittedAccountId) !== record.accountId) {
+    return res.status(409).json({ ok: false, message: '导入码与当前 accountId 不匹配，请重新生成导入码' });
+  }
   if (new Date(record.expiresAt).getTime() < Date.now()) {
     record.usedAt = new Date().toISOString();
     writeDb(db);
@@ -1285,18 +1362,21 @@ app.post('/api/import-code/:code/submit', (req, res) => {
 
   const targetUser = db.users.find((u) => u.id === record.userId);
   if (!targetUser) return res.status(404).json({ ok: false, message: '导入码对应的小德课表账号不存在' });
+  if (!accountForUser(db, record.userId, record.accountId)) {
+    return res.status(404).json({ ok: false, message: '导入码对应的 accountId 不存在' });
+  }
 
   const diag = getJwxtImportDiagnostics(jwxtData);
   const converted = convertJwxtKbData(jwxtData);
   if (!converted.length) return res.status(400).json({ ok: false, rawCount: diag.rawCount, kbListCount: diag.kbListCount, sourceCounts: diag.sourceCounts, message: '收到教务系统数据，但没有识别到可导入课程' });
 
   const normalized = converted
-    .map((item) => normalizeCourse(item, record.userId))
+    .map((item) => normalizeCourse(item, record.userId, record.accountId))
     .filter((c) => c.name && c.day && c.slot);
 
-  const previousCount = coursesForUser(db, record.userId).length;
+  const previousCount = coursesForAccount(db, record.accountId).length;
   if (record.replace) {
-    db.courses = db.courses.filter((c) => !courseBelongsToUser(c, record.userId)).concat(normalized);
+    db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, record.accountId)).concat(normalized);
   } else {
     db.courses = db.courses.concat(normalized);
   }
@@ -1310,6 +1390,7 @@ app.post('/api/import-code/:code/submit', (req, res) => {
   record.previousCount = previousCount;
   db.meta.lastAndroidImportAt = importedAt;
   db.meta.lastAndroidImportUserId = record.userId;
+  db.meta.lastAndroidImportAccountId = record.accountId;
   db.meta.courseVersion = Number(db.meta.courseVersion || 0) + 1;
   writeDb(db);
 
@@ -1352,8 +1433,14 @@ app.put('/api/my/profile', requireLogin, (req, res) => {
   }
   user.name = cleanName;
   user.username = cleanUsername;
+  const account = accountForUser(db, user.id, req.auth.accountId);
+  if (account) {
+    account.name = cleanName;
+    account.username = cleanUsername;
+    account.updatedAt = new Date().toISOString();
+  }
   writeDb(db);
-  res.json({ ok: true, user: { id: user.id, username: user.username, name: user.name, role: user.role, switchKey: user.switchKey } });
+  res.json({ ok: true, accountId: req.auth.accountId, user: publicUser(user, req.auth.accountId) });
 });
 
 app.delete('/api/my/account', requireLogin, (req, res) => {
@@ -1366,10 +1453,15 @@ app.delete('/api/my/account', requireLogin, (req, res) => {
   }
   if (user.role === 'admin') return res.status(400).json({ ok: false, message: '管理员账号不能在这里删除' });
   const beforeCourses = db.courses.length;
+  const accountIds = new Set((db.accounts || []).filter((account) => account.userId === user.id).map((account) => account.id));
   db.users = db.users.filter((u) => u.id !== user.id);
   db.sessions = db.sessions.filter((s) => s.userId !== user.id);
-  db.courses = db.courses.filter((c) => !courseBelongsToUser(c, user.id));
-  if (Array.isArray(db.feedbacks)) db.feedbacks = db.feedbacks.filter((f) => f.userId !== user.id);
+  db.accounts = (db.accounts || []).filter((account) => account.userId !== user.id);
+  db.settings = (db.settings || []).filter((setting) => !accountIds.has(setting.accountId));
+  db.reminders = (db.reminders || []).filter((reminder) => !accountIds.has(reminder.accountId));
+  db.importCodes = (db.importCodes || []).filter((item) => !accountIds.has(item.accountId));
+  db.courses = db.courses.filter((course) => !accountIds.has(course.accountId));
+  if (Array.isArray(db.feedbacks)) db.feedbacks = db.feedbacks.filter((feedback) => !accountIds.has(feedback.accountId));
   writeDb(db);
   res.json({ ok: true, removedCourses: beforeCourses - db.courses.length });
 });
@@ -1390,7 +1482,7 @@ app.post('/api/my/feedback', requireLogin, (req, res) => {
   db.feedbacks.unshift({
     id: uid('fb'),
     userId: req.auth.user.id,
-    accountId: req.auth.user.id,
+    accountId: req.auth.accountId,
     username: req.auth.user.username,
     name: req.auth.user.name,
     type: String(type || '建议').trim() || '建议',
@@ -1413,24 +1505,29 @@ app.get('/api/admin/feedbacks', requireAdmin, (req, res) => {
 
 app.get('/api/admin/users', requireAdmin, (req, res) => {
   const db = readDb();
-  const users = db.users.map((u) => ({
-    id: u.id,
-    accountId: accountIdForUser(u),
-    username: u.username,
-    name: u.name,
-    role: u.role,
-    courseCount: coursesForUser(db, u.id).length,
-    createdAt: u.createdAt
-  }));
+  const users = db.users.map((u) => {
+    const accountIds = new Set((db.accounts || []).filter((account) => account.userId === u.id).map((account) => account.id));
+    return {
+      id: u.id,
+      accountId: accountIdForUser(u),
+      username: u.username,
+      name: u.name,
+      role: u.role,
+      courseCount: (db.courses || []).filter((course) => accountIds.has(course.accountId)).length,
+      createdAt: u.createdAt
+    };
+  });
   res.json({ ok: true, users });
 });
 
 app.get('/api/admin/schema', requireAdmin, (req, res) => {
   const db = readDb();
-  const accountIds = new Set((db.accounts || []).map((account) => account.id));
-  const userIds = new Set((db.users || []).map((user) => user.id));
+  const accountOwners = new Map((db.accounts || []).map((account) => [account.id, account.userId]));
   const missingAccountIdCourses = (db.courses || []).filter((course) => !course.accountId).length;
-  const orphanCourses = (db.courses || []).filter((course) => course.accountId && !accountIds.has(course.accountId) && !userIds.has(course.userId)).length;
+  const orphanCourses = (db.courses || []).filter((course) => course.accountId && accountOwners.get(course.accountId) !== course.userId).length;
+  const orphanSettings = (db.settings || []).filter((setting) => accountOwners.get(setting.accountId) !== setting.userId).length;
+  const orphanReminders = (db.reminders || []).filter((reminder) => accountOwners.get(reminder.accountId) !== reminder.userId).length;
+  const orphanImportCodes = (db.importCodes || []).filter((item) => accountOwners.get(item.accountId) !== item.userId).length;
   res.json({
     ok: true,
     schemaVersion: db.meta?.schemaVersion || 1,
@@ -1447,7 +1544,11 @@ app.get('/api/admin/schema', requireAdmin, (req, res) => {
     checks: {
       missingAccountIdCourses,
       orphanCourses,
-      readyForMysql: missingAccountIdCourses === 0 && orphanCourses === 0
+      orphanSettings,
+      orphanReminders,
+      orphanImportCodes,
+      accountIsolationOk: missingAccountIdCourses === 0 && orphanCourses === 0 && orphanSettings === 0 && orphanReminders === 0 && orphanImportCodes === 0,
+      readyForMysql: missingAccountIdCourses === 0 && orphanCourses === 0 && orphanSettings === 0 && orphanReminders === 0 && orphanImportCodes === 0
     }
   });
 });
@@ -1489,11 +1590,16 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   }
 
   const beforeCourses = db.courses.length;
+  const targetAccountIds = new Set((db.accounts || []).filter((account) => account.userId === target.id).map((account) => account.id));
   db.users = db.users.filter((u) => u.id !== target.id);
   db.sessions = db.sessions.filter((s) => s.userId !== target.id);
-  db.courses = db.courses.filter((c) => !courseBelongsToUser(c, target.id));
+  db.accounts = (db.accounts || []).filter((account) => account.userId !== target.id);
+  db.settings = (db.settings || []).filter((setting) => !targetAccountIds.has(setting.accountId));
+  db.reminders = (db.reminders || []).filter((reminder) => !targetAccountIds.has(reminder.accountId));
+  db.importCodes = (db.importCodes || []).filter((item) => !targetAccountIds.has(item.accountId));
+  db.courses = db.courses.filter((course) => !targetAccountIds.has(course.accountId));
   if (Array.isArray(db.feedbacks)) {
-    db.feedbacks = db.feedbacks.filter((f) => f.userId !== target.id);
+    db.feedbacks = db.feedbacks.filter((feedback) => !targetAccountIds.has(feedback.accountId));
   }
   writeDb(db);
   res.json({ ok: true, message: `已删除用户 ${target.username}`, removedCourses: beforeCourses - db.courses.length });

@@ -95,6 +95,10 @@ object WidgetUpdater {
 
         try {
             val json = JSONObject(payload)
+            val accountId = json.optString("accountId", "").trim()
+            if (accountId.isBlank() || accountId != WidgetDataStore.getActiveAccountId(context)) {
+                throw IllegalStateException("Widget account context is invalid")
+            }
             val scheduleName = json.optString("scheduleName", "我的课表").ifBlank { "我的课表" }
             val meta = json.optJSONObject("meta") ?: JSONObject()
             val termStart = meta.optString("termStart", "")

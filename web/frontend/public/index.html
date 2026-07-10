@@ -656,14 +656,16 @@
     function pickHealingQuote(){return HEALING_QUOTES[Math.floor(Math.random()*HEALING_QUOTES.length)]}
     const STYLE={public_required:'var(--public_required)',major_required:'var(--major_required)',major_elective:'var(--major_elective)',public_elective:'var(--public_elective)',lab:'var(--lab)',custom:'var(--custom)'};
     const DEFAULT_COURSE_SETTINGS={totalWeeks:'',weekStartDay:'1',termStart:'',showLocation:true,showTeacher:true,showClassGroup:false,customTime:false};
-    function loadCourseSettings(){try{return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(localStorage.getItem('xiaodeCourseSettings')||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
-    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:localStorage.getItem('xiaodeTheme')||'morandi',bottomToolbarHidden:localStorage.getItem('xiaodeBottomToolbarHidden')==='1',tableSize:localStorage.getItem('xiaodeTableSize')||'classic',tableDayWidth:Number(localStorage.getItem('xiaodeTableDayWidth')||0),tableRowHeight:Number(localStorage.getItem('xiaodeTableRowHeight')||0),hideFifthSlot:localStorage.getItem('xiaodeHideFifthSlot')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false};
+    function currentStoredAccountId(){return localStorage.getItem('xiaodeCurrentAccountId')||''}
+    function accountStorageKey(base,accountId=currentStoredAccountId()){return accountId?`${base}:${accountId}`:`${base}:guest`}
+    function loadCourseSettings(){try{const scoped=localStorage.getItem(accountStorageKey('xiaodeCourseSettings'));const legacy=localStorage.getItem('xiaodeCourseSettings');return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
+    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:localStorage.getItem('xiaodeTheme')||'morandi',bottomToolbarHidden:localStorage.getItem('xiaodeBottomToolbarHidden')==='1',tableSize:localStorage.getItem('xiaodeTableSize')||'classic',tableDayWidth:Number(localStorage.getItem('xiaodeTableDayWidth')||0),tableRowHeight:Number(localStorage.getItem('xiaodeTableRowHeight')||0),hideFifthSlot:localStorage.getItem('xiaodeHideFifthSlot')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false};
     const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
     function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
     function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;localStorage.setItem('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
     function showLoginPanel(){ $('#loginPanel')?.classList.remove('hidden'); $('#registerPanel')?.classList.add('hidden'); }
     function showRegisterPanel(){ $('#registerPanel')?.classList.remove('hidden'); $('#loginPanel')?.classList.add('hidden'); }
-    async function api(path, opts={}){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(state.token?{'x-user-token':state.token}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
+    async function api(path, opts={}, authToken=state.token){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(authToken?{'x-user-token':authToken}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
     
     function currentPreferenceSnapshot(){
       return {
@@ -678,22 +680,27 @@
         reminderSettings:loadReminderSettings()
       };
     }
-    function accountPreferenceKey(user=state.user){ return user?.id ? `xiaodeAccountPreferences:${user.id}` : ''; }
+    function accountPreferenceKey(user=state.user){ const accountId=user?.accountId||state.accountId; return accountId ? `xiaodeAccountPreferences:${accountId}` : ''; }
     function saveAccountPreferencesLocal(snapshot=currentPreferenceSnapshot(), user=state.user){ const key=accountPreferenceKey(user); if(key) localStorage.setItem(key, JSON.stringify(snapshot)); }
     function loadAccountPreferencesLocal(user=state.user){ try{ const key=accountPreferenceKey(user); return key?JSON.parse(localStorage.getItem(key)||'{}'):{}; }catch(_){ return {}; } }
-    let preferenceSaveTimer=null;
+    const preferenceSaveTimers=new Map();
     function schedulePreferenceSave(){
       if(!state.user||!state.token||state.applyingPreferences) return;
       const prefs=currentPreferenceSnapshot();
+      const accountId=state.accountId;
+      const token=state.token;
       saveAccountPreferencesLocal(prefs);
       const list=getSavedAccounts();
-      const idx=list.findIndex(x=>x.username===state.user.username);
+      const idx=list.findIndex(x=>(x.accountId&&x.accountId===accountId)||(!x.accountId&&x.username===state.user.username));
       if(idx>=0){ list[idx]={...list[idx], preferences:prefs, name:state.user.name, username:state.user.username, savedAt:new Date().toISOString()}; setSavedAccounts(list); }
-      clearTimeout(preferenceSaveTimer);
-      preferenceSaveTimer=setTimeout(async()=>{
-        try{ await api('/api/my/preferences',{method:'PUT',body:JSON.stringify({preferences:currentPreferenceSnapshot()})}); }
+      clearTimeout(preferenceSaveTimers.get(accountId));
+      const timer=setTimeout(async()=>{
+        if(!accountId||!token) return;
+        try{ await api('/api/my/preferences',{method:'PUT',body:JSON.stringify({preferences:prefs})},token); }
         catch(e){ console.warn('preferences save failed', e); }
+        finally{ if(preferenceSaveTimers.get(accountId)===timer) preferenceSaveTimers.delete(accountId); }
       },500);
+      preferenceSaveTimers.set(accountId,timer);
     }
     function applyAccountPreferences(pref={}){
       const fallback=loadAccountPreferencesLocal();
@@ -719,7 +726,7 @@
     function pad(n){return String(n).padStart(2,'0')}
     function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:Number(settings.totalWeeks||meta.totalWeeks||17),termStart:settings.termStart||meta.termStart||'',weekStartDay:Number(settings.weekStartDay||1)}; }
     function totalWeeks(){ return Number(effectiveMeta().totalWeeks||17); }
-    function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem('xiaodeCourseSettings', JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
+    function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
     function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
     const DEFAULT_12_SLOTS=[
       {slot:1,label:'第1节',start:'08:00',end:'08:45',range:'08:00-08:45'},
@@ -1396,8 +1403,8 @@
     async function parsePdfFile(file){ if(!window.pdfjsLib){ throw new Error('PDF 组件未加载完成，请稍后再试'); } const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({data:buf}).promise; let text=''; for(let i=1;i<=pdf.numPages;i++){ const page = await pdf.getPage(i); const content = await page.getTextContent(); text += content.items.map(it=>it.str).join(' ') + '\n'; } const rows = rowsFromPdfText(text); if(!rows.length) throw new Error('这个 PDF 没提取到可识别课程'); return rows; }
     function renderAll(){ applyTheme(state.theme); applyCourseSettingsVisibility(); applyTableSize(state.tableSize); updateBottomToolbar(!!state.user); if(!state.meta) return; renderHeader(); updateTrialFeatures(); if(!state.user) return; fillSelectors(); renderWeeks(); renderTable(); renderMobile(); renderSlots(); if($('#profileName')) $('#profileName').value=state.user.name||''; $$('.mode .btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.infoMode)); updateToolbarToggleTile(); updateTableSizeTile(); updateTrialFeatures(); }
     async function bootPublic(){ const data=await api('/api/public/bootstrap'); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); renderAll(); }
-    async function loadMe(){ const data=await api('/api/auth/me'); state.user=data.user; state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||''; if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); state.courses=data.courses; applyAccountPreferences(data.preferences||{}); renderAuthState(true); clearCourseForm(); renderAll(); rememberCurrentAccount(); syncWidgetNow('loadMe'); }
-    function resetToLoggedOut(){ state.user=null; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); renderAuthState(false); renderAll(); }
+    async function loadMe(){ const data=await api('/api/auth/me'); const previousAccountId=state.accountId; state.user=data.user; state.accountId=data.accountId||data.user?.accountId||''; if(!state.accountId) throw new Error('后端没有返回 accountId'); localStorage.setItem('xiaodeCurrentAccountId',state.accountId); state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||''; if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId); if(previousAccountId&&previousAccountId!==state.accountId) latestAndroidImportCode=''; applyAccountPreferences(data.preferences||{}); renderAuthState(true); clearCourseForm(); renderAll(); rememberCurrentAccount(); syncWidgetNow('loadMe'); }
+    function resetToLoggedOut(){ state.user=null; state.accountId=''; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); localStorage.removeItem('xiaodeCurrentAccountId'); renderAuthState(false); renderAll(); }
 
     $('#showRegisterAuth') && ($('#showRegisterAuth').onclick=showRegisterPanel);
     $('#accountAvatarBtn') && ($('#accountAvatarBtn').onclick=openAccountModal);
@@ -1409,8 +1416,9 @@
         const raw=JSON.parse(localStorage.getItem('xiaodeSavedAccounts')||'[]');
         const byUser=new Map();
         raw.filter(x=>x&&x.username&&(x.token||x.switchKey)).forEach(x=>{
-          const old=byUser.get(x.username)||{};
-          byUser.set(x.username,{...old,...x});
+          const key=x.accountId||`legacy:${x.username}`;
+          const old=byUser.get(key)||{};
+          byUser.set(key,{...old,...x});
         });
         return [...byUser.values()];
       }catch{return []}
@@ -1419,8 +1427,8 @@
     function rememberCurrentAccount(){
       if(!state.user||!state.token) return;
       const switchKey = state.switchKey || state.user.switchKey || '';
-      const list=getSavedAccounts().filter(x=>x.username!==state.user.username);
-      list.unshift({name:state.user.name||state.user.username, username:state.user.username, token:state.token, switchKey, preferences:currentPreferenceSnapshot(), savedAt:new Date().toISOString()});
+      const list=getSavedAccounts().filter(x=>x.accountId?x.accountId!==state.accountId:x.username!==state.user.username);
+      list.unshift({accountId:state.accountId,name:state.user.name||state.user.username, username:state.user.username, token:state.token, switchKey, preferences:currentPreferenceSnapshot(), savedAt:new Date().toISOString()});
       setSavedAccounts(list);
     }
     async function loginAndLoad(username,password){
@@ -1457,6 +1465,7 @@
     async function switchToSavedAccount(acc, btn){
       const previousToken=state.token;
       const previousSwitchKey=state.switchKey;
+      const previousAccountId=state.accountId;
       const originalText=btn?.textContent||'切换';
       if(btn){ btn.disabled=true; btn.textContent='切换中…'; }
       let tokenError=null;
@@ -1476,7 +1485,7 @@
       }
       try{
         if(acc.switchKey){
-          const r=await api('/api/auth/quick-switch',{method:'POST',body:JSON.stringify({username:acc.username,switchKey:acc.switchKey})});
+          const r=await api('/api/auth/quick-switch',{method:'POST',body:JSON.stringify({username:acc.username,accountId:acc.accountId||'',switchKey:acc.switchKey})});
           state.token=r.token;
           state.switchKey=r.switchKey||acc.switchKey||'';
           localStorage.setItem('courseTableUserToken',state.token);
@@ -1491,8 +1500,10 @@
       }
       state.token=previousToken;
       state.switchKey=previousSwitchKey;
+      state.accountId=previousAccountId;
       if(previousToken) localStorage.setItem('courseTableUserToken',previousToken); else localStorage.removeItem('courseTableUserToken');
       if(previousSwitchKey) localStorage.setItem('xiaodeCurrentSwitchKey',previousSwitchKey); else localStorage.removeItem('xiaodeCurrentSwitchKey');
+      if(previousAccountId) localStorage.setItem('xiaodeCurrentAccountId',previousAccountId); else localStorage.removeItem('xiaodeCurrentAccountId');
       if(btn){ btn.disabled=false; btn.textContent=originalText; }
       if(tokenError && /请先登录|过期|401|登录状态/i.test(String(tokenError.message||tokenError))){
         toast('这个账号需要重新验证一次');
@@ -1501,7 +1512,7 @@
       toast(tokenError?.message||'切换失败');
     }
     
-    function removeSavedAccount(username){ setSavedAccounts(getSavedAccounts().filter(x=>x.username!==username)); }
+    function removeSavedAccount(identity){ setSavedAccounts(getSavedAccounts().filter(x=>x.accountId!==identity&&x.username!==identity)); }
     function openRenameAccountModal(){
       const oldUsername=state.user?.username||'';
       openModal('重命名账号', `
@@ -1915,12 +1926,12 @@
     }
     const DEFAULT_REMINDER_SETTINGS={startEnabled:true,startOffset:10,endEnabled:true,endOffset:0,calendarId:'',calendarName:''};
     function loadReminderSettings(){
-      try{return {...DEFAULT_REMINDER_SETTINGS,...JSON.parse(localStorage.getItem('xiaodeReminderSettings')||'{}')}}catch(_){return {...DEFAULT_REMINDER_SETTINGS}}
+      try{const scoped=localStorage.getItem(accountStorageKey('xiaodeReminderSettings',state.accountId));const legacy=localStorage.getItem('xiaodeReminderSettings');return {...DEFAULT_REMINDER_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch(_){return {...DEFAULT_REMINDER_SETTINGS}}
     }
     function saveReminderSettings(next){
       const merged={...loadReminderSettings(),...(next||{})};
       merged.startOffset=Number(merged.startOffset||0); merged.endOffset=Number(merged.endOffset||0);
-      localStorage.setItem('xiaodeReminderSettings', JSON.stringify(merged));
+      localStorage.setItem(accountStorageKey('xiaodeReminderSettings',state.accountId), JSON.stringify(merged));
       schedulePreferenceSave();
       return merged;
     }
@@ -1943,7 +1954,7 @@
     function formatTime(ms){ const d=new Date(Number(ms)); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
     function buildReminderEvents(settings=loadReminderSettings()){
       const events=[];
-      const markerBase=(state.user?.username||state.user?.name||'me').replace(/[^\w\u4e00-\u9fa5-]/g,'_');
+      const markerBase=(state.accountId||'unknown').replace(/[^\w-]/g,'_');
       for(let w=1;w<=totalWeeks();w++){
         coursesForWeek(w).forEach(c=>{
           const dayDate=weekDateObject(c.day,w); if(!dayDate) return;
@@ -1959,7 +1970,7 @@
             events.push({
               type:'start',title:`${titleBase} 上课提醒`,courseName:titleBase,location,week:w,day:Number(c.day||1),slot:Number(c.slot||1),
               startMs,endMs,remindMs,alarmMinutes:Math.max(0,off),fingerprint:`${markerBase}-${c.id||titleBase}-${w}-start`,
-              description:`${common}\n${off>0?`${off} 分钟后上课`:'现在上课'}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-start`
+              description:`${common}\n${off>0?`${off} 分钟后上课`:'现在上课'}\nXIAODE_ACCOUNT::${state.accountId}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-start`
             });
           }
           if(settings.endEnabled){
@@ -1968,7 +1979,7 @@
             events.push({
               type:'end',title:`${titleBase} 下课提醒`,courseName:titleBase,location,week:w,day:Number(c.day||1),slot:Number(c.slot||1),
               startMs:remindMs,endMs:remindMs+5*60000,remindMs,alarmMinutes:0,fingerprint:`${markerBase}-${c.id||titleBase}-${w}-end`,
-              description:`${common}\n${off>0?`${off} 分钟后下课`:'现在下课'}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-end`
+              description:`${common}\n${off>0?`${off} 分钟后下课`:'现在下课'}\nXIAODE_ACCOUNT::${state.accountId}\nXIAODE_REMINDER::${markerBase}-${c.id||titleBase}-${w}-end`
             });
           }
         });
@@ -2055,7 +2066,7 @@
       const events=buildReminderEvents(settings);
       if(!events.length) return toast('没有可同步的课程提醒');
       try{
-        window.XiaoDeAndroid.syncCourseReminders(JSON.stringify({version:1,calendarId:String(settings.calendarId),calendarName:settings.calendarName||'',settings,events}));
+        window.XiaoDeAndroid.syncCourseReminders(JSON.stringify({version:2,accountId:state.accountId,calendarId:String(settings.calendarId),calendarName:settings.calendarName||'',settings,events}));
         toast(`正在写入系统日历，共 ${events.length} 个提醒`);
       }catch(e){ toast(e.message||'同步日历失败'); }
     }
@@ -2256,6 +2267,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
         }
         const payload={
           code:r.code,
+          accountId:r.accountId||state.accountId,
           xnm:r.xnm || xnm,
           xqm:r.xqm || xqm,
           replace:!!r.replace,
@@ -2327,7 +2339,8 @@ $('#helpBtnAuth').onclick = openHelpModal;
       const current = state.user ? nowCourse(now) : null;
       const next = state.user ? nextCourse(now) : null;
       return {
-        version: 1,
+        version: 2,
+        accountId: state.accountId,
         reason: 'web-sync',
         syncedAt: new Date().toISOString(),
         scheduleName: state.user ? (state.user.name || state.user.username || '我的课表') : '我的课表',

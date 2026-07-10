@@ -18,7 +18,7 @@ xiaode-course-table/
 
 - 当前版本：v39
 - Web 项目来源：xiaode-course-table-web-v39-mysql-local-test
-- Android 项目来源：xiaode-android-app-v29-v39-mysql-local-test
+- Android 版本：0.28.0-v39-account-isolation
 - 默认存储：`web/backend/data/db.json`
 - 可选模式：本地 MySQL 测试模式，使用 `XIAODE_STORAGE=mysql` 开启
 
@@ -86,6 +86,15 @@ C:\work3\xiaode-course-table\android
 cd C:\work3\xiaode-course-table\android
 gradle assembleDebug
 ```
+
+后端 accountId 隔离回归测试：
+
+```powershell
+cd C:\work3\xiaode-course-table\web\backend
+npm test
+```
+
+隔离设计与审计结果见 `docs/account-isolation.md`。
 
 ## db.json 默认模式
 

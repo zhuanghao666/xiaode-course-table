@@ -11,8 +11,8 @@ android {
         applicationId = "com.xiaode.importhelper"
         minSdk = 23
         targetSdk = 35
-        versionCode = 27
-        versionName = "0.27.0-v37-account-switch"
+        versionCode = 28
+        versionName = "0.28.0-v39-account-isolation"
     }
 
     compileOptions {
