@@ -4,6 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import {
+  analyzeJwxtImport,
+  IMPORT_REASON_CODES,
+  mergeCourseRecords,
+  parseWeeksDetailed
+} from './import-pipeline.js';
+import { createImportDiagnosticsStore } from './import-diagnostics-store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,11 +20,13 @@ const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FIL
   : path.join(__dirname, '..', 'data', 'db.json');
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = 'v39';
+const APP_VERSION = 'v40-dev';
 const DB_SCHEMA_VERSION = 4;
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
 const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
+const importDiagnosticsStore = createImportDiagnosticsStore({ dataFile: DATA_FILE });
 let runtimeDbCache = null;
+let writeDbCallCount = 0;
 let mysqlSyncState = null;
 let mysqlStatusReader = null;
 let mysqlStorageStatus = {
@@ -82,6 +91,7 @@ function readDb() {
 }
 
 function writeDb(db) {
+  writeDbCallCount += 1;
   const normalized = migrateDbToV38(db || {});
   normalized.meta.lastUpdated = new Date().toISOString();
   normalized.meta.storageDriver = 'json';
@@ -363,135 +373,9 @@ function reminderForAccount(db, userId, accountId) {
 }
 
 
-function normalizeWeeks(weeks, weekText = '') {
-  if (Array.isArray(weeks) && weeks.length) {
-    return [...new Set(weeks.map(Number).filter(Boolean))].sort((a, b) => a - b);
-  }
-
-  // 支持“1-3周,5-16周”“第8周”“9-10周”“1~16周(单周)”等复杂周次。
-  const text = String(weekText || '').trim();
-  if (!text) return [];
-
-  const out = new Set();
-  const rangeRegex = /(\d+)\s*[-~到至]\s*(\d+)/g;
-  let match;
-  const consumed = [];
-  while ((match = rangeRegex.exec(text)) !== null) {
-    const start = Number(match[1]);
-    const end = Number(match[2]);
-    if (start && end) {
-      const a = Math.min(start, end);
-      const b = Math.max(start, end);
-      for (let i = a; i <= b; i++) out.add(i);
-      consumed.push([match.index, match.index + match[0].length]);
-    }
-  }
-
-  // 再解析没有出现在区间里的单周，例如“8周”“第12周”。
-  const withoutRanges = text.split('').map((ch, idx) => {
-    return consumed.some(([a, b]) => idx >= a && idx < b) ? ' ' : ch;
-  }).join('');
-  for (const m of withoutRanges.matchAll(/\d+/g)) {
-    const n = Number(m[0]);
-    if (n) out.add(n);
-  }
-
-  return [...out].sort((a, b) => a - b);
-}
-
-function parseJwxtDay(item = {}) {
-  const raw = item.xqj ?? item.weekday ?? item.day;
-  const n = Number(raw);
-  if (n >= 1 && n <= 7) return n;
-
-  const text = String(item.xqjmc || item.xqjName || item.weekText || '').trim();
-  const map = {
-    '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 7, '天': 7,
-    '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7
-  };
-  for (const [key, value] of Object.entries(map)) {
-    if (text.includes(key)) return value;
-  }
-  return 0;
-}
-
-function pickFirstText(item = {}, keys = []) {
-  for (const key of keys) {
-    const value = item[key];
-    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
-  }
-  return '';
-}
-
-function stripHtmlText(text = '') {
-  return String(text || '')
-    .replace(/<br\s*\/?\s*>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function looksLikeJwxtCourseItem(item = {}) {
-  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-  const name = pickFirstText(item, ['kcmc', 'kcmcMc', 'kcmc_name', 'courseName', 'name']);
-  if (!name) return false;
-  const hasDay = Boolean(item.xqj || item.xqjmc || item.weekday || item.day);
-  const hasSection = Boolean(item.jcor || item.jcs || item.jc || item.ksjc || item.jsjc || item.skjc || item.jcxx);
-  const hasWeek = Boolean(item.zcd || item.zc || item.zcmc || item.weekText || item.weeks);
-  return hasDay && (hasSection || hasWeek);
-}
-
-function collectJwxtCourseItems(data = {}) {
-  const items = [];
-  const sourceCounts = {};
-  const visited = new Set();
-
-  const add = (source, value) => {
-    if (!Array.isArray(value)) return;
-    let count = 0;
-    for (const item of value) {
-      if (!looksLikeJwxtCourseItem(item)) continue;
-      const cloned = { ...item, __source: source };
-      items.push(cloned);
-      count++;
-    }
-    if (count) sourceCounts[source] = (sourceCounts[source] || 0) + count;
-  };
-
-  const walk = (node, pathName = 'root', depth = 0) => {
-    if (!node || typeof node !== 'object' || depth > 2) return;
-    if (visited.has(node)) return;
-    visited.add(node);
-
-    if (Array.isArray(node)) {
-      add(pathName, node);
-      for (let i = 0; i < Math.min(node.length, 20); i++) walk(node[i], `${pathName}[${i}]`, depth + 1);
-      return;
-    }
-
-    for (const [key, value] of Object.entries(node)) {
-      if (Array.isArray(value)) add(key, value);
-      else if (value && typeof value === 'object') walk(value, key, depth + 1);
-    }
-  };
-
-  walk(data);
-
-  // 优先保证 kbList 即使字段略特殊也被纳入。
-  if (Array.isArray(data.kbList)) {
-    const already = new Set(items.map((item) => item));
-    for (const item of data.kbList) {
-      if (looksLikeJwxtCourseItem(item) && !already.has(item)) items.push({ ...item, __source: 'kbList' });
-    }
-    sourceCounts.kbList = Math.max(sourceCounts.kbList || 0, data.kbList.filter(looksLikeJwxtCourseItem).length);
-  }
-
-  return { items, sourceCounts };
-}
-
 function normalizeCourse(input, userId, accountId) {
   const weekText = String(input.weekText || '').trim();
+  const parsed = parseWeeksDetailed(input.weeks, weekText);
   return {
     id: input.id || uid('c'),
     userId,
@@ -503,10 +387,20 @@ function normalizeCourse(input, userId, accountId) {
     teacher: String(input.teacher || '').trim(),
     location: String(input.location || '').trim(),
     classGroup: String(input.classGroup || '').trim(),
-    weekText,
-    weeks: normalizeWeeks(input.weeks, weekText),
-    oddEven: input.oddEven || 'all',
-    category: input.category || 'custom'
+    weekText: parsed.normalizedWeekText || weekText,
+    weeks: parsed.baseWeeks,
+    oddEven: input.oddEven || parsed.oddEven || 'all',
+    category: input.category || 'custom',
+    source: input.source || 'manual',
+    sourceDetail: String(input.sourceDetail || '').slice(0, 200),
+    sourceIndex: Number.isInteger(Number(input.sourceIndex)) ? Number(input.sourceIndex) : null,
+    startSlot: Number(input.startSlot || input.slot || 0),
+    endSlot: Number(input.endSlot || input.slot || 0),
+    termKey: String(input.termKey || '').slice(0, 80),
+    xnm: String(input.xnm || '').slice(0, 20),
+    xqm: String(input.xqm || '').slice(0, 20),
+    isAdjusted: Boolean(input.isAdjusted),
+    importTraceId: String(input.importTraceId || '').slice(0, 80)
   };
 }
 
@@ -536,104 +430,6 @@ function timeTextToMinutes(value = '') {
   return h * 60 + m;
 }
 
-function inferOddEvenFromText(weekText = '') {
-  const text = String(weekText || '');
-  if (text.includes('单')) return 'odd';
-  if (text.includes('双')) return 'even';
-  return 'all';
-}
-
-function mapJwxtCategory(kclb = '', kcxz = '', name = '') {
-  const text = `${kclb || ''} ${kcxz || ''} ${name || ''}`;
-  if (text.includes('实验')) return 'lab';
-  if (text.includes('公共必修')) return 'public_required';
-  if (text.includes('专业必修')) return 'major_required';
-  if (text.includes('专业选修')) return 'major_elective';
-  if (text.includes('公共选修')) return 'public_elective';
-  return 'custom';
-}
-
-function mapJwxtJcToSlots(jcor = '') {
-  const text = stripHtmlText(String(jcor || '')).replace(/[第节]/g, '').trim();
-  const match = text.match(/(\d+)\s*[-~到至]\s*(\d+)/);
-  if (!match) {
-    const n = Number(text.match(/\d+/)?.[0] || text);
-    if (n >= 1 && n <= 12) return [n];
-    if (n === 13) return [12];
-    return [];
-  }
-
-  const start = Math.max(1, Number(match[1]));
-  const end = Math.min(12, Number(match[2]));
-  if (!start || !end || end < start) return [];
-  const out = [];
-  for (let slot = start; slot <= end; slot += 1) out.push(slot);
-  return out;
-}
-
-function mapJwxtItemToSlots(item = {}) {
-  const start = Number(item.ksjc || item.qsjc || item.startSection || item.startJc || 0);
-  const end = Number(item.jsjc || item.zzjc || item.endSection || item.endJc || 0);
-  if (start && end) return mapJwxtJcToSlots(`${start}-${end}`);
-
-  const text = pickFirstText(item, ['jcor', 'jcs', 'jc', 'skjc', 'jcxx', 'sectionText']);
-  return mapJwxtJcToSlots(text);
-}
-
-function uniqueCourses(courses) {
-  const map = new Map();
-  for (const c of courses) {
-    const key = [c.day, c.slot, c.name, c.teacher, c.location, c.weekText, c.oddEven].join('|');
-    if (!map.has(key)) map.set(key, c);
-  }
-  return [...map.values()];
-}
-
-function convertJwxtKbData(data = {}) {
-  // v13：不再只读 kbList。教务系统页面里的调课、实践课、补课等可能在其他数组字段里。
-  // 这里会递归扫描顶层/二级 JSON 数组，把“看起来像课程”的对象都纳入转换。
-  const { items } = collectJwxtCourseItems(data);
-  const courses = [];
-
-  for (const item of items) {
-    const slots = mapJwxtItemToSlots(item);
-    const day = parseJwxtDay(item);
-    const name = stripHtmlText(pickFirstText(item, ['kcmc', 'kcmcMc', 'kcmc_name', 'courseName', 'name']));
-    const teacher = stripHtmlText(pickFirstText(item, ['xm', 'jsxm', 'teacher', 'teachers', 'jsxx']));
-    const location = stripHtmlText(pickFirstText(item, ['cdmc', 'jxcdmc', 'croomName', 'location', 'jxdd', 'skdd']));
-    const weekText = stripHtmlText(pickFirstText(item, ['zcd', 'zc', 'zcmc', 'weekText', 'weeks']));
-    const source = String(item.__source || '');
-    const isAdjusted = /调|tk|adjust/i.test(`${source} ${item.tkbz || ''} ${item.bz || ''} ${name}`);
-
-    for (const slot of slots) {
-      courses.push({
-        day,
-        slot,
-        name: isAdjusted && !name.includes('调') ? `【调】${name}` : name,
-        teacher,
-        location,
-        weekText: weekText || '1-17周',
-        oddEven: inferOddEvenFromText(weekText || ''),
-        category: mapJwxtCategory(item.kclb, item.kcxz, name)
-      });
-    }
-  }
-
-  return uniqueCourses(courses).filter((c) => c.name && c.day && c.slot);
-}
-
-function getJwxtImportDiagnostics(data = {}) {
-  const { items, sourceCounts } = collectJwxtCourseItems(data);
-  const converted = convertJwxtKbData(data);
-  const kbListCount = Array.isArray(data.kbList) ? data.kbList.length : 0;
-  return {
-    rawCount: items.length,
-    kbListCount,
-    convertedCount: converted.length,
-    sourceCounts
-  };
-}
-
 function makeImportCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -643,8 +439,12 @@ function makeImportCode() {
 
 function ensureImportCodes(db) {
   if (!Array.isArray(db.importCodes)) db.importCodes = [];
-  const now = Date.now();
-  db.importCodes = db.importCodes.filter((item) => !item.usedAt && new Date(item.expiresAt).getTime() > now - 60_000);
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  // 保留近期已使用/过期记录，才能准确区分 USED 与 EXPIRED，而不是统一返回“不存在”。
+  db.importCodes = db.importCodes.filter((item) => {
+    const createdAt = new Date(item?.createdAt || item?.expiresAt || 0).getTime();
+    return Number.isFinite(createdAt) && createdAt >= cutoff;
+  });
 }
 
 async function fetchJwxtScheduleByPuppeteer({ username, password, xnm, xqm }) {
@@ -847,8 +647,10 @@ app.get('/api/health', (req, res) => {
       primary: 'db.json',
       primaryCounts,
       primaryMigrationWarnings: db.meta?.migrationWarnings || [],
-      mysqlMirror: currentMysqlStorageStatus()
+      mysqlMirror: currentMysqlStorageStatus(),
+      importDiagnostics: importDiagnosticsStore.status()
     },
+    ...(process.env.NODE_ENV === 'test' ? { testAudit: { writeDbCallCount } } : {}),
     time: new Date().toISOString()
   });
 });
@@ -1083,6 +885,185 @@ function buildUserBackup(db, user, accountId) {
   };
 }
 
+function finishImportTrace(trace, patch = {}) {
+  try {
+    return importDiagnosticsStore.finish(trace, patch);
+  } catch (err) {
+    // 诊断持久化不能反向影响 JSON 主业务。
+    console.error('[import-diagnostics] 保存脱敏诊断失败：', String(err?.message || err));
+    return { ...trace, ...patch };
+  }
+}
+
+function importFailure(trace, status, reasonCode, message, patch = {}) {
+  const completed = finishImportTrace(trace, {
+    status: 'failed',
+    reasonCode,
+    message,
+    errors: [...(patch.errors || trace.errors || []), { reasonCode, message }],
+    ...patch
+  });
+  return {
+    status,
+    body: {
+      ok: false,
+      traceId: trace.traceId,
+      reasonCode,
+      message,
+      summary: completed.summary || trace.summary,
+      warnings: completed.warnings || [],
+      refreshRequired: false
+    }
+  };
+}
+
+function isJwxtCourseForTerm(course, accountId, termKey) {
+  return courseBelongsToAccount(course, accountId)
+    && course.source === 'jwxt'
+    && course.termKey === termKey;
+}
+
+function addPreImportBackup(db, user, accountId, traceId, xnm, xqm) {
+  if (!Array.isArray(db.backups)) db.backups = [];
+  const entry = {
+    id: uid('backup_import'),
+    kind: 'pre-import',
+    userId: user.id,
+    accountId,
+    traceId,
+    xnm: String(xnm || ''),
+    xqm: String(xqm || ''),
+    createdAt: new Date().toISOString(),
+    backup: buildUserBackup(db, user, accountId)
+  };
+  const sameAccount = db.backups.filter((item) => item.accountId === accountId && item.kind === 'pre-import');
+  const removeIds = new Set(sameAccount.slice(9).map((item) => item.id));
+  db.backups = [entry, ...db.backups.filter((item) => !removeIds.has(item.id))];
+  return entry.id;
+}
+
+function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, trace, importCode = '' }) {
+  const analysis = analyzeJwxtImport(jwxtData, {
+    traceId: trace.traceId,
+    userId: user.id,
+    accountId,
+    xnm,
+    xqm,
+    maxWeeks: Math.max(20, Number(db.meta?.totalWeeks || 20))
+  });
+  const traceBase = {
+    rawResponseType: analysis.rawResponseType,
+    candidateSources: analysis.candidateSources,
+    sourceCounts: analysis.sourceCounts,
+    candidates: analysis.candidates,
+    mergeEvents: analysis.mergeEvents,
+    summary: analysis.summary,
+    warnings: analysis.warnings,
+    errors: analysis.errors,
+    timings: analysis.timings
+  };
+  if (!analysis.summary.received) {
+    return importFailure(trace, 422, IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, '教务响应中没有找到候选课程数组。', traceBase);
+  }
+  if (!analysis.courses.length) {
+    const reasonCode = analysis.errors[0]?.reasonCode || IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE;
+    return importFailure(trace, 422, reasonCode, '已收到教务数据，但所有候选均未通过安全解析。', traceBase);
+  }
+
+  const normalized = analysis.courses
+    .map((item) => normalizeCourse(item, user.id, accountId))
+    .filter((course) => course.name && course.day >= 1 && course.day <= 7 && course.slot >= 1 && course.slot <= 12 && course.weeks.length);
+  if (!normalized.length || normalized.some((course) => course.accountId !== accountId)) {
+    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '规范化结果为空或 accountId 校验失败。', traceBase);
+  }
+
+  const termKey = `${String(xnm || '')}:${String(xqm || '')}`;
+  const beforeCount = coursesForAccount(db, accountId).length;
+  const nextDb = cloneDb(db);
+  const existingSameTerm = nextDb.courses.filter((course) => isJwxtCourseForTerm(course, accountId, termKey));
+  const preserved = nextDb.courses.filter((course) => !isJwxtCourseForTerm(course, accountId, termKey));
+  let importedCourses = normalized;
+  let appendMergeEvents = [];
+  let appendWarnings = [];
+  if (!replace) {
+    const appended = mergeCourseRecords([...existingSameTerm, ...normalized]);
+    importedCourses = appended.courses;
+    appendMergeEvents = appended.events;
+    appendWarnings = appended.warnings;
+  }
+  const nextCourses = [...preserved, ...importedCourses];
+  if (nextCourses.some((course) => !course.accountId) || normalized.some((course) => course.source !== 'jwxt')) {
+    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入结果范围校验失败，旧课程保持不变。', traceBase);
+  }
+
+  addPreImportBackup(nextDb, user, accountId, trace.traceId, xnm, xqm);
+  nextDb.courses = nextCourses;
+  const importedAt = new Date().toISOString();
+  if (importCode) {
+    const record = nextDb.importCodes.find((item) => item.code === importCode);
+    if (record) {
+      record.usedAt = importedAt;
+      record.traceId = trace.traceId;
+      record.importedCount = normalized.length;
+    }
+  }
+  nextDb.meta.lastAndroidImportAt = importedAt;
+  nextDb.meta.lastAndroidImportUserId = user.id;
+  nextDb.meta.lastAndroidImportAccountId = accountId;
+  nextDb.meta.lastImportTraceId = trace.traceId;
+  nextDb.meta.courseVersion = Number(nextDb.meta.courseVersion || 0) + 1;
+  const afterCount = nextCourses.filter((course) => courseBelongsToAccount(course, accountId)).length;
+  const summary = {
+    ...analysis.summary,
+    merged: analysis.summary.merged + appendMergeEvents.length,
+    written: normalized.length,
+    beforeCount,
+    afterCount
+  };
+  const writeStart = process.hrtime.bigint();
+  try {
+    writeDb(nextDb);
+  } catch (err) {
+    const writeMs = Number(process.hrtime.bigint() - writeStart) / 1_000_000;
+    return importFailure(trace, 500, IMPORT_REASON_CODES.UNKNOWN, '写入 db.json 失败，旧课程未被替换。', {
+      ...traceBase,
+      summary,
+      timings: { ...analysis.timings, writeMs: Number(writeMs.toFixed(3)) }
+    });
+  }
+  const writeMs = Number(process.hrtime.bigint() - writeStart) / 1_000_000;
+  const warnings = [...analysis.warnings, ...appendWarnings];
+  const completed = finishImportTrace(trace, {
+    ...traceBase,
+    status: 'success',
+    message: `收到 ${summary.received} 条，识别 ${summary.recognized} 条，写入 ${summary.written} 条，合并 ${summary.merged} 条，过滤 ${summary.filtered} 条。`,
+    summary,
+    warnings,
+    mergeEvents: [...analysis.mergeEvents, ...appendMergeEvents],
+    timings: { ...analysis.timings, writeMs: Number(writeMs.toFixed(3)) }
+  });
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      code: importCode ? 'IMPORT_CODE_OK' : 'IMPORT_OK',
+      traceId: trace.traceId,
+      summary,
+      warnings,
+      refreshRequired: true,
+      count: summary.written,
+      rawCount: summary.received,
+      convertedCount: summary.accepted,
+      previousCount: beforeCount,
+      afterCount,
+      replace: Boolean(replace),
+      importedAt,
+      courseVersion: nextDb.meta.courseVersion,
+      message: completed.message
+    }
+  };
+}
+
 function unpackBackupPayload(input = {}) {
   const backup = input && typeof input === 'object' && input.backup ? input.backup : input;
   if (!backup || typeof backup !== 'object' || Array.isArray(backup)) {
@@ -1244,94 +1225,20 @@ app.post('/api/my/import', requireLogin, (req, res) => {
 
 // Android 导入助手专用：App 内 WebView 中由用户自己登录教务系统，App 只上传课表 JSON，不上传教务密码。
 app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
-  const { jwxtData, replace = true } = req.body || {};
+  const { jwxtData, replace = true, xnm = '', xqm = '' } = req.body || {};
+  const trace = importDiagnosticsStore.begin({ accountId: req.auth.accountId, replace, xnm, xqm });
   if (!jwxtData || typeof jwxtData !== 'object') {
-    return res.status(400).json({
-      ok: false,
-      code: 'JWXT_DATA_MISSING',
-      message: '缺少教务系统课表数据 jwxtData。请在 Android App 内完成教务系统登录后重新导入。'
-    });
+    const failed = importFailure(trace, 400, IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, '缺少教务系统课表数据 jwxtData。');
+    return res.status(failed.status).json(failed.body);
   }
-
-  const diag = getJwxtImportDiagnostics(jwxtData);
-  const rawList = collectJwxtCourseItems(jwxtData).items;
-  if (!rawList.length) {
-    return res.status(400).json({
-      ok: false,
-      code: 'JWXT_KBLIST_MISSING',
-      rawCount: 0,
-      message: '教务系统返回数据里没有可识别的课表数组。常见原因：教务登录已过期、Cookie 没带上、接口返回了登录页，或学年学期参数不对。'
-    });
-  }
-
-  const converted = convertJwxtKbData(jwxtData);
-  if (!converted.length) {
-    const sample = rawList.slice(0, 2).map((item) => ({
-      kcmc: item.kcmc,
-      xqj: item.xqj,
-      jcor: item.jcor,
-      jcs: item.jcs,
-      jc: item.jc,
-      zcd: item.zcd,
-      cdmc: item.cdmc
-    }));
-    return res.status(400).json({
-      ok: false,
-      code: 'JWXT_CONVERT_EMPTY',
-      rawCount: rawList.length,
-      sample,
-      message: rawList.length
-        ? `收到教务系统可识别原始记录=${rawList.length} 条，但没有识别到可导入课程。可能字段结构变化、节次字段为空，或学年学期参数不对。`
-        : '教务系统课表记录为空。请确认当前学年学期有课，或把 xnm/xqm 改成正确值后重试。'
-    });
-  }
-
-  const normalized = converted
-    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId))
-    .filter((c) => c.name && c.day && c.slot);
-
-  if (!normalized.length) {
-    return res.status(400).json({
-      ok: false,
-      code: 'COURSE_NORMALIZE_EMPTY',
-      rawCount: rawList.length,
-      kbListCount: diag.kbListCount,
-      sourceCounts: diag.sourceCounts,
-      convertedCount: converted.length,
-      message: '教务数据已转换，但保存前校验全部失败。请检查课程名、星期、节次字段。'
-    });
-  }
-
   const db = readDb();
-  const previousCount = coursesForAccount(db, req.auth.accountId).length;
-  if (replace) {
-    db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, req.auth.accountId)).concat(normalized);
-  } else {
-    db.courses = db.courses.concat(normalized);
+  const user = db.users.find((item) => item.id === req.auth.user.id);
+  if (!user) {
+    const failed = importFailure(trace, 404, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '当前账号不存在。');
+    return res.status(failed.status).json(failed.body);
   }
-  const importedAt = new Date().toISOString();
-  db.meta.lastAndroidImportAt = importedAt;
-  db.meta.lastAndroidImportUserId = req.auth.user.id;
-  db.meta.lastAndroidImportAccountId = req.auth.accountId;
-  db.meta.courseVersion = Number(db.meta.courseVersion || 0) + 1;
-  writeDb(db);
-
-  res.json({
-    ok: true,
-    code: 'IMPORT_OK',
-    count: normalized.length,
-    rawCount: diag.rawCount || rawList.length,
-    kbListCount: diag.kbListCount,
-    sourceCounts: diag.sourceCounts,
-    convertedCount: converted.length,
-    previousCount,
-    replace: Boolean(replace),
-    importedAt,
-    courseVersion: db.meta.courseVersion,
-    message: replace
-      ? `已替换原有 ${previousCount} 条课程，导入 ${normalized.length} 条课程。`
-      : `已追加导入 ${normalized.length} 条课程。`
-  });
+  const result = executeJwxtImport({ db, user, accountId: req.auth.accountId, jwxtData, replace: Boolean(replace), xnm, xqm, trace });
+  return res.status(result.status).json(result.body);
 });
 
 
@@ -1369,12 +1276,13 @@ app.get('/api/import-code/:code', (req, res) => {
 
   const db = readDb();
   ensureImportCodes(db);
-  const record = db.importCodes.find((item) => item.code === code && !item.usedAt);
-  if (!record) return res.status(404).json({ ok: false, message: '导入码不存在、已使用或已过期，请回到小德课表重新生成' });
+  const record = db.importCodes.find((item) => item.code === code);
+  if (!record) return res.status(404).json({ ok: false, reasonCode: IMPORT_REASON_CODES.UNKNOWN, message: '导入码不存在，请回到小德课表重新生成' });
+  if (record.usedAt) return res.status(409).json({ ok: false, reasonCode: IMPORT_REASON_CODES.USED_IMPORT_CODE, message: '导入码已使用，请重新生成' });
 
   const secondsLeft = Math.max(0, Math.floor((new Date(record.expiresAt).getTime() - Date.now()) / 1000));
   if (secondsLeft <= 0) {
-    return res.status(400).json({ ok: false, message: '导入码已过期，请回到小德课表重新生成' });
+    return res.status(410).json({ ok: false, reasonCode: IMPORT_REASON_CODES.EXPIRED_IMPORT_CODE, message: '导入码已过期，请回到小德课表重新生成' });
   }
 
   res.json({
@@ -1394,72 +1302,52 @@ app.post('/api/import-code/:code/submit', (req, res) => {
   const code = String(req.params.code || '').trim().toUpperCase();
   const { jwxtData, accountId: submittedAccountId } = req.body || {};
 
-  if (!code) return res.status(400).json({ ok: false, message: '缺少导入码' });
-  if (!jwxtData || typeof jwxtData !== 'object') return res.status(400).json({ ok: false, message: '缺少教务系统课表数据' });
-
   const db = readDb();
   ensureImportCodes(db);
-  const record = db.importCodes.find((item) => item.code === code && !item.usedAt);
-  if (!record) return res.status(404).json({ ok: false, message: '导入码不存在、已使用或已过期，请回到小德课表重新生成' });
-  if (submittedAccountId && String(submittedAccountId) !== record.accountId) {
-    return res.status(409).json({ ok: false, message: '导入码与当前 accountId 不匹配，请重新生成导入码' });
+  const record = db.importCodes.find((item) => item.code === code);
+  const trace = importDiagnosticsStore.begin({ accountId: record?.accountId || '', replace: record?.replace, xnm: record?.xnm, xqm: record?.xqm });
+  if (!code || !record) {
+    const failed = importFailure(trace, 404, IMPORT_REASON_CODES.UNKNOWN, '导入码不存在，请回到小德课表重新生成。');
+    return res.status(failed.status).json(failed.body);
   }
-  if (new Date(record.expiresAt).getTime() < Date.now()) {
-    record.usedAt = new Date().toISOString();
-    writeDb(db);
-    return res.status(400).json({ ok: false, message: '导入码已过期，请回到小德课表重新生成' });
+  if (record.usedAt) {
+    const failed = importFailure(trace, 409, IMPORT_REASON_CODES.USED_IMPORT_CODE, '导入码已使用，请重新生成。');
+    return res.status(failed.status).json(failed.body);
+  }
+  if (new Date(record.expiresAt).getTime() <= Date.now()) {
+    const failed = importFailure(trace, 410, IMPORT_REASON_CODES.EXPIRED_IMPORT_CODE, '导入码已过期，请重新生成。');
+    return res.status(failed.status).json(failed.body);
+  }
+  if (submittedAccountId && String(submittedAccountId) !== record.accountId) {
+    const failed = importFailure(trace, 403, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入码与当前 accountId 不匹配。');
+    return res.status(failed.status).json(failed.body);
+  }
+  if (!jwxtData || typeof jwxtData !== 'object') {
+    const failed = importFailure(trace, 400, IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, '缺少教务系统课表数据。');
+    return res.status(failed.status).json(failed.body);
   }
 
   const targetUser = db.users.find((u) => u.id === record.userId);
-  if (!targetUser) return res.status(404).json({ ok: false, message: '导入码对应的小德课表账号不存在' });
+  if (!targetUser) {
+    const failed = importFailure(trace, 404, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入码对应的小德课表账号不存在。');
+    return res.status(failed.status).json(failed.body);
+  }
   if (!accountForUser(db, record.userId, record.accountId)) {
-    return res.status(404).json({ ok: false, message: '导入码对应的 accountId 不存在' });
+    const failed = importFailure(trace, 404, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入码对应的 accountId 不存在。');
+    return res.status(failed.status).json(failed.body);
   }
-
-  const diag = getJwxtImportDiagnostics(jwxtData);
-  const converted = convertJwxtKbData(jwxtData);
-  if (!converted.length) return res.status(400).json({ ok: false, rawCount: diag.rawCount, kbListCount: diag.kbListCount, sourceCounts: diag.sourceCounts, message: '收到教务系统数据，但没有识别到可导入课程' });
-
-  const normalized = converted
-    .map((item) => normalizeCourse(item, record.userId, record.accountId))
-    .filter((c) => c.name && c.day && c.slot);
-
-  const previousCount = coursesForAccount(db, record.accountId).length;
-  if (record.replace) {
-    db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, record.accountId)).concat(normalized);
-  } else {
-    db.courses = db.courses.concat(normalized);
-  }
-  const importedAt = new Date().toISOString();
-  record.usedAt = importedAt;
-  record.importedCount = normalized.length;
-  record.rawCount = diag.rawCount;
-  record.kbListCount = diag.kbListCount;
-  record.sourceCounts = diag.sourceCounts;
-  record.convertedCount = converted.length;
-  record.previousCount = previousCount;
-  db.meta.lastAndroidImportAt = importedAt;
-  db.meta.lastAndroidImportUserId = record.userId;
-  db.meta.lastAndroidImportAccountId = record.accountId;
-  db.meta.courseVersion = Number(db.meta.courseVersion || 0) + 1;
-  writeDb(db);
-
-  res.json({
-    ok: true,
-    code: 'IMPORT_CODE_OK',
-    count: normalized.length,
-    rawCount: record.rawCount,
-    kbListCount: record.kbListCount,
-    sourceCounts: record.sourceCounts,
-    convertedCount: converted.length,
-    previousCount,
+  const result = executeJwxtImport({
+    db,
+    user: targetUser,
+    accountId: record.accountId,
+    jwxtData,
     replace: Boolean(record.replace),
-    importedAt,
-    courseVersion: db.meta.courseVersion,
-    message: record.replace
-      ? `已替换原有 ${previousCount} 条课程，导入 ${normalized.length} 条课程到 ${targetUser.name} 的小德课表`
-      : `已追加导入 ${normalized.length} 条课程到 ${targetUser.name} 的小德课表`
+    xnm: record.xnm,
+    xqm: record.xqm,
+    trace,
+    importCode: record.code
   });
+  return res.status(result.status).json(result.body);
 });
 
 app.post('/api/my/import/jwxt', requireLogin, async (req, res) => {
@@ -1546,6 +1434,39 @@ app.post('/api/my/feedback', requireLogin, (req, res) => {
   });
   writeDb(db);
   res.json({ ok: true, message: '反馈已收到，谢谢你' });
+});
+
+app.get('/api/my/import-diagnostics/latest', requireLogin, (req, res) => {
+  const trace = importDiagnosticsStore.latestForAccount(req.auth.accountId);
+  if (!trace) return res.status(404).json({ ok: false, message: '当前账号还没有导入诊断摘要' });
+  res.json({
+    ok: true,
+    trace: {
+      traceId: trace.traceId,
+      createdAt: trace.createdAt,
+      completedAt: trace.completedAt || null,
+      status: trace.status,
+      summary: trace.summary,
+      warnings: trace.warnings || [],
+      errors: trace.errors || [],
+      reasonCode: trace.reasonCode || null,
+      message: trace.message || '',
+      replace: Boolean(trace.replace),
+      xnm: trace.xnm || '',
+      xqm: trace.xqm || '',
+      timings: trace.timings || {}
+    }
+  });
+});
+
+app.get('/api/admin/import-diagnostics', requireAdmin, (req, res) => {
+  res.json({ ok: true, status: importDiagnosticsStore.status(), traces: importDiagnosticsStore.list(req.query.limit) });
+});
+
+app.get('/api/admin/import-diagnostics/:traceId', requireAdmin, (req, res) => {
+  const trace = importDiagnosticsStore.get(String(req.params.traceId || ''));
+  if (!trace) return res.status(404).json({ ok: false, message: '诊断 trace 不存在' });
+  res.json({ ok: true, trace });
 });
 
 app.get('/api/admin/feedbacks', requireAdmin, (req, res) => {
