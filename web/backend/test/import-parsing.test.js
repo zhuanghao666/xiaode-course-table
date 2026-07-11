@@ -89,13 +89,14 @@ test('fixtures expose candidate counts, filtering, merging, conflicts and field 
   assert.ok(duplicates.warnings.some((warning) => warning.reasonCode === IMPORT_REASON_CODES.CONFLICTING_SCHEDULE));
 
   const invalid = analyzeJwxtImport(fixture('invalid-candidates'), context);
-  assert.equal(invalid.summary.received, 7);
-  assert.equal(invalid.summary.filtered, 6);
+  assert.equal(invalid.summary.received, 8);
+  assert.equal(invalid.summary.filtered, 7);
   assert.equal(invalid.summary.written, 2);
   const reasons = new Set(invalid.candidates.map((candidate) => candidate.reasonCode).filter(Boolean));
   for (const reason of [
     IMPORT_REASON_CODES.MISSING_NAME,
     IMPORT_REASON_CODES.MISSING_DAY,
+    IMPORT_REASON_CODES.INVALID_DAY,
     IMPORT_REASON_CODES.MISSING_SECTION,
     IMPORT_REASON_CODES.MISSING_WEEKS,
     IMPORT_REASON_CODES.INVALID_WEEKS,

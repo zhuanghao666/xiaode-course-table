@@ -176,6 +176,7 @@ test('invalid, expired and account-mismatched imports preserve all existing cour
   const invalid = await request(baseUrl, `/api/import-code/${invalidCode.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', jwxtData: { kbList: [] } } });
   assert.equal(invalid.status, 422);
   assert.ok(invalid.data.traceId);
+  assert.equal(invalid.data.reasonCode, 'UNSUPPORTED_STRUCTURE');
   const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
   assert.deepEqual(disk.courses.map((course) => course.id).sort(), initialIds);
   assert.equal(disk.importCodes.find((item) => item.code === invalidCode.data.code).usedAt, null);
@@ -200,4 +201,3 @@ test('MySQL failure does not block traced JSON import', async (t) => {
   assert.equal(health.data.storage.mysqlMirror.ok, false);
   assert.ok(JSON.parse(fs.readFileSync(dataFile, 'utf8')).courses.some((course) => course.importTraceId === imported.data.traceId));
 });
-
