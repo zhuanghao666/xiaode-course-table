@@ -1,6 +1,6 @@
 {
-  "name": "xiaode-course-table-web-v39",
-  "version": "39.0.0",
+  "name": "xiaode-course-table-web-v40",
+  "version": "40.0.0-dev.0",
   "private": true,
   "type": "module",
   "scripts": {

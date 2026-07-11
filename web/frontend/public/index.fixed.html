@@ -1429,6 +1429,11 @@
       renderAll();
       rememberCurrentAccount();
       syncWidgetNow('loadMe');
+      const pendingImportKey=accountStorageKey('xiaodePendingImportRefresh',state.accountId);
+      if(localStorage.getItem(pendingImportKey)){
+        localStorage.removeItem(pendingImportKey);
+        setTimeout(()=>toast('该账号的教务导入结果已刷新'),50);
+      }
       return true;
     }
     function beginAccountTransition(){
@@ -2450,12 +2455,17 @@ $('#helpBtnAuth').onclick = openHelpModal;
     window.addEventListener('xiaode-import-success', async (ev) => {
       try{
         const d = ev.detail || window.__xiaodeLastImportSummary || {};
-        if(d.accountId && d.accountId!==state.accountId) return;
+        const summary=d.summary||{};
+        const summaryText=`收到 ${summary.received??d.rawCount??0} 条，识别 ${summary.recognized??d.convertedCount??0} 条，写入 ${summary.written??d.savedCount??d.count??0} 条，合并 ${summary.merged??0} 条，过滤 ${summary.filtered??0} 条。`;
+        if(d.accountId && d.accountId!==state.accountId){
+          localStorage.setItem(accountStorageKey('xiaodePendingImportRefresh',d.accountId),JSON.stringify({traceId:d.traceId||'',summary,completedAt:new Date().toISOString()}));
+          toast('另一账号导入完成，切回后会自动刷新');
+          return;
+        }
         const accountAtStart=state.accountId;
         await loadMe({expectedAccountId:accountAtStart});
-        const saved = d.savedCount ?? d.count ?? '';
         syncWidgetNow('import-success');
-        toast(saved !== '' ? `教务导入成功，已更新 ${saved} 条课程` : '教务导入成功，课表已刷新');
+        toast(`教务导入成功：${summaryText}`);
       }catch(e){
         console.warn('Android 导入成功后刷新失败：', e);
         toast('导入成功，但课表自动刷新失败，请手动刷新');

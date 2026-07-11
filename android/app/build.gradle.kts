@@ -11,8 +11,8 @@ android {
         applicationId = "com.xiaode.importhelper"
         minSdk = 23
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.28.0-v39-account-isolation"
+        versionCode = 29
+        versionName = "0.29.0-v40-import-diagnostics"
     }
 
     compileOptions {
@@ -28,4 +28,5 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    testImplementation("junit:junit:4.13.2")
 }
