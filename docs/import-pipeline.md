@@ -73,3 +73,11 @@ v39 课程是一条记录代表一个 `slot`。连续 1～2 节会转换为两�
 - replace 只替换当前 accountId、同学期、来源为 jwxt 的课程；保留手动课程和其他学期。
 - 完整解析和 nextCourses 校验成功后，先创建当前账号用户级备份，再一次调用 writeDb；任何失败都不得先清空旧课程。
 - 诊断不得保存 Cookie、密码、token、学号或完整原始教务响应。
+
+## v40 落地结果
+
+实现位于 `web/backend/src/import-pipeline.js` 和 `web/backend/src/import-diagnostics-store.js`。候选数组递归扫描深度提高到 5，支持 HTML 包裹 JSON 文本，且失败候选也进入 reasonCode 诊断。`parsedWeeks` 统一表示已应用单双周的最终真实周次集合，不再默认空周次为全周。
+
+课程仍保持 v39 的逐 `slot` 兼容结构，新增 `source/sourceDetail/sourceIndex/startSlot/endSlot/term/xnm/xqm/isAdjusted/importTraceId` 供追踪。去重指纹包含账号、名称、日期节次、教师、地点、班组、周次、单双周、类别和来源；仅周次不同时安全合并，教室、教师或调课差异保留并标记冲突。
+
+replace 最终范围是「导入码绑定 accountId + 同 `xnm/xqm` 学期 + `source=jwxt`」。完整解析成功后先组装 `nextCourses`、验证归属、创建用户级导入前备份，再用一次 `writeDb()` 提交。Android 的 `ImportTaskContext` 在任务开始时冻结 server/importCode/accountId/学期/替换模式，完成事件只刷新仍处于激活状态的原账号。
