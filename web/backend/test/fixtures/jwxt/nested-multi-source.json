@@ -1,0 +1,38 @@
+{
+  "data": {
+    "rows": [
+      {
+        "courseName": "嵌套课程",
+        "weekday": "周四",
+        "startSection": 6,
+        "endSection": 7,
+        "weekText": "第1-3周",
+        "teacher": "教师丁",
+        "location": "教室401"
+      }
+    ]
+  },
+  "extra": {
+    "practiceList": [
+      {
+        "kcmc_name": "实践课程",
+        "day": 5,
+        "jcxx": "8-9节",
+        "zcmc": "1至16周",
+        "jsxx": "教师戊",
+        "skdd": "实践楼"
+      }
+    ],
+    "adjustmentList": [
+      {
+        "kcmc": "临时调课",
+        "xqj": 6,
+        "skjc": "第10节",
+        "zc": "第8周",
+        "tkbz": "调课",
+        "xm": "教师己",
+        "cdmc": "临时教室"
+      }
+    ]
+  }
+}

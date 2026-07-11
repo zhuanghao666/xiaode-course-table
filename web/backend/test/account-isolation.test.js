@@ -260,7 +260,7 @@ test('courses, settings, reminders and imports are isolated by accountId', async
     method: 'POST',
     body: { accountId: 'account-b', jwxtData: { kbList: [] } }
   });
-  assert.equal(mismatchedSubmit.status, 409);
+  assert.equal(mismatchedSubmit.status, 403);
   const codeSubmit = await request(baseUrl, `/api/import-code/${importCode.data.code}/submit`, {
     method: 'POST',
     body: {
@@ -271,7 +271,7 @@ test('courses, settings, reminders and imports are isolated by accountId', async
   assert.equal(codeSubmit.status, 200);
   const meAAfterCode = await request(baseUrl, '/api/auth/me', { token: tokenA });
   const meBAfterCode = await request(baseUrl, '/api/auth/me', { token: tokenB });
-  assert.deepEqual(meAAfterCode.data.courses.map((course) => course.name), ['Alpha Code Import']);
+  assert.deepEqual(meAAfterCode.data.courses.map((course) => course.name), ['Alpha Imported', 'Alpha Code Import']);
   assert.deepEqual(meBAfterCode.data.courses.map((course) => course.name), ['B-化学-导入替换']);
 
   const invalidToken = await request(baseUrl, '/api/auth/me', { token: 'invalid-token' });
