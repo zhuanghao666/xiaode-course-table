@@ -70,16 +70,23 @@ test('section parser supports one or continuous slots and rejects ambiguous stru
 test('fixtures expose candidate counts, filtering, merging, conflicts and field variants', () => {
   const context = { accountId: 'account-a', userId: 'user-a', xnm: '2026', xqm: '12', traceId: 'trace-test' };
   const standard = analyzeJwxtImport(fixture('standard-kblist'), context);
-  assert.deepEqual(standard.summary, { received: 3, recognized: 3, accepted: 5, filtered: 0, merged: 0, written: 5, beforeCount: 0, afterCount: 0 });
+  assert.deepEqual(standard.summary, {
+    received: 3, recognized: 3, accepted: 5, filtered: 0, merged: 0, written: 5,
+    beforeCount: 0, afterCount: 0, rawCount: 3, acceptedCount: 3, importedCount: 5,
+    filteredWrongTermCount: 0, filteredUnknownSourceCount: 0
+  });
   assert.deepEqual(standard.responseTerms, [{ xnm: '2026', xqm: '12', count: 3 }]);
   assert.ok(standard.courses.every((course) => course.accountId === 'account-a' && course.source === 'jwxt'));
   assert.equal(standard.courses.find((course) => course.name === '大学物理').oddEven, 'odd');
 
   const nested = analyzeJwxtImport(fixture('nested-multi-source'), context);
   assert.equal(nested.summary.received, 3);
-  assert.equal(nested.summary.written, 5);
+  assert.equal(nested.summary.written, 3);
+  assert.equal(nested.filteredUnknownSourceCount, 1);
+  assert.deepEqual(nested.unknownSourceCounts, { 'data.rows': 1 });
   assert.ok(nested.candidateSources.some((source) => source.includes('adjustmentList')));
   assert.ok(nested.courses.some((course) => course.isAdjusted && course.name.includes('调')));
+  assert.equal(nested.courses.some((course) => course.name === '嵌套课程'), false);
 
   const duplicates = analyzeJwxtImport(fixture('duplicates-conflicts'), context);
   assert.equal(duplicates.summary.received, 6);
@@ -108,4 +115,27 @@ test('fixtures expose candidate counts, filtering, merging, conflicts and field 
 
   assert.equal(analyzeJwxtImport(fixture('empty-response'), context).summary.received, 0);
   assert.equal(analyzeJwxtImport(fixture('html-wrapped'), context).summary.written, 1);
+});
+
+test('strict term parser ignores unknown arrays and filters records from another term', () => {
+  const context = { accountId: 'account-a', userId: 'user-a', xnm: '2025', xqm: '3', selectedTermLabel: '2025-2026 第一学期' };
+  const result = analyzeJwxtImport({
+    totalWeeks: 20,
+    kbList: [
+      { kcmc: '第一学期课程', xnm: '2025', xqm: '3', xqj: 1, jcor: '1节', zcd: '1-20周' },
+      { kcmc: '错误第二学期', xnm: '2025', xqm: '12', xqj: 1, jcor: '1节', zcd: '1-17周', totalWeeks: 50 }
+    ],
+    historyRows: [
+      { kcmc: '未知来源历史课', xnm: '2024', xqm: '12', xqj: 2, jcor: '2节', zcd: '1-18周' }
+    ]
+  }, context);
+  assert.deepEqual(result.courses.map((course) => course.name), ['第一学期课程']);
+  assert.equal(result.filteredWrongTermCount, 1);
+  assert.equal(result.filteredUnknownSourceCount, 1);
+  assert.equal(result.rawCount, 3);
+  assert.equal(result.acceptedCount, 1);
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.explicitTotalWeeks, 20);
+  assert.equal(result.courses[0].termKey, 'account-a:2025:3');
+  assert.equal(result.courses[0].selectedTermLabel, context.selectedTermLabel);
 });

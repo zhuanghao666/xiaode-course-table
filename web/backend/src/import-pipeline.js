@@ -18,6 +18,8 @@ export const IMPORT_REASON_CODES = Object.freeze({
   MISSING_TERM_PARAMS: 'MISSING_TERM_PARAMS',
   INVALID_TERM_PARAMS: 'INVALID_TERM_PARAMS',
   TERM_RESPONSE_MISMATCH: 'TERM_RESPONSE_MISMATCH',
+  FILTERED_WRONG_TERM: 'FILTERED_WRONG_TERM',
+  FILTERED_UNKNOWN_SOURCE: 'FILTERED_UNKNOWN_SOURCE',
   UNKNOWN: 'UNKNOWN'
 });
 
@@ -37,6 +39,20 @@ const COURSE_HINT_KEYS = new Set([
   'xqj', 'xqjmc', 'xqjName', 'weekday', 'day',
   'ksjc', 'jsjc', 'qsjc', 'zzjc', 'startSection', 'endSection', 'startJc', 'endJc'
 ]);
+const TERM_LABEL_KEYS = ['selectedTermLabel', 'xnxqmc', 'xnxqMc', 'xnmcXqmc', 'semesterName', 'termName'];
+const ALLOWED_COURSE_ARRAYS = new Map([
+  ['kblist', 'kbList'],
+  ['sjklist', 'sjkList'],
+  ['practicelist', 'practiceList'],
+  ['adjustmentlist', 'adjustmentList'],
+  ['tklist', 'tkList'],
+  ['bklist', 'bkList'],
+  ['bkkblist', 'bkkbList'],
+  ['temporarycourselist', 'temporaryCourseList'],
+  ['extracourselist', 'extraCourseList']
+]);
+const TOTAL_WEEKS_KEYS = new Set(['totalweeks', 'xqzcs', 'zxs', 'maxweek', 'weekcount']);
+const TERM_START_KEYS = new Set(['termstart', 'xqksrq', 'startdate', 'semesterstartdate']);
 const SENSITIVE_FIELD_NAME = /password|passwd|pwd|cookie|token|authorization|student|studentid|xh|xuehao|sfzh|idcard/i;
 
 function nowMs() {
@@ -286,12 +302,18 @@ export function collectJwxtCandidates(data, options = {}) {
   const maxCandidates = Math.max(10, Math.min(5000, Number(options.maxCandidates || 1000)));
   const candidates = [];
   const sourceCounts = {};
+  const unknownSourceCounts = {};
   const visited = new Set();
 
   const addCandidate = (item, source, sourceIndex) => {
     if (!looksLikeCandidate(item) || candidates.length >= maxCandidates) return;
     candidates.push({ item, source, sourceIndex });
     sourceCounts[source] = (sourceCounts[source] || 0) + 1;
+  };
+
+  const countUnknownCandidates = (items, source) => {
+    const count = items.filter(looksLikeCandidate).length;
+    if (count) unknownSourceCounts[source] = (unknownSourceCounts[source] || 0) + count;
   };
 
   const walk = (node, pathName = 'root', depth = 0) => {
@@ -304,17 +326,38 @@ export function collectJwxtCandidates(data, options = {}) {
     if (typeof node !== 'object' || visited.has(node)) return;
     visited.add(node);
     if (Array.isArray(node)) {
-      node.forEach((item, index) => {
-        addCandidate(item, pathName, index);
-        walk(item, `${pathName}[${index}]`, depth + 1);
-      });
+      // 根数组及来源不明数组只做计数，不再把“看起来像课程”的对象直接导入。
+      countUnknownCandidates(node, pathName);
+      node.forEach((item, index) => walk(item, `${pathName}[${index}]`, depth + 1));
       return;
     }
-    for (const [key, value] of Object.entries(node)) walk(value, pathName === 'root' ? key : `${pathName}.${key}`, depth + 1);
+    for (const [key, value] of Object.entries(node)) {
+      const childPath = pathName === 'root' ? key : `${pathName}.${key}`;
+      if (Array.isArray(value)) {
+        const allowedSource = ALLOWED_COURSE_ARRAYS.get(String(key).toLowerCase());
+        if (allowedSource) {
+          value.forEach((item, index) => addCandidate(item, allowedSource, index));
+          value.forEach((item, index) => walk(item, `${childPath}[${index}]`, depth + 1));
+        } else {
+          countUnknownCandidates(value, childPath);
+          value.forEach((item, index) => walk(item, `${childPath}[${index}]`, depth + 1));
+        }
+        continue;
+      }
+      walk(value, childPath, depth + 1);
+    }
   };
 
   walk(data);
-  return { candidates, sourceCounts, rawResponseType: rawResponseType(data), truncated: candidates.length >= maxCandidates };
+  const filteredUnknownSourceCount = Object.values(unknownSourceCounts).reduce((sum, count) => sum + count, 0);
+  return {
+    candidates,
+    sourceCounts,
+    unknownSourceCounts,
+    filteredUnknownSourceCount,
+    rawResponseType: rawResponseType(data),
+    truncated: candidates.length >= maxCandidates
+  };
 }
 
 function mapCategory(item = {}, name = '') {
@@ -439,6 +482,71 @@ function rejection(diag, reasonCode, humanReadableReason) {
   return diag;
 }
 
+function normalizedTermLabel(value = '') {
+  return normalizeText(value).replace(/\s+/g, ' ');
+}
+
+function responseTermForItem(item = {}) {
+  return {
+    xnm: normalizeText(item.xnm ?? item.XNM ?? ''),
+    xqm: normalizeText(item.xqm ?? item.XQM ?? ''),
+    label: normalizedTermLabel(pickFirst(item, TERM_LABEL_KEYS))
+  };
+}
+
+function itemMatchesRequestedTerm(item, context) {
+  const response = responseTermForItem(item);
+  const requestedXnm = normalizeText(context.xnm || '');
+  const requestedXqm = normalizeText(context.xqm || '');
+  const requestedLabel = normalizedTermLabel(context.selectedTermLabel || '');
+  const hasCode = Boolean(response.xnm || response.xqm);
+  const codeMatches = !hasCode || (response.xnm === requestedXnm && response.xqm === requestedXqm);
+  const labelMatches = !response.label || response.label === requestedLabel;
+  return { matches: codeMatches && labelMatches, response };
+}
+
+function extractScheduleMetadata(data, context = {}) {
+  const maxDepth = Math.max(1, Math.min(8, Number(context.maxDepth || 5)));
+  const visited = new Set();
+  const totalWeeksValues = [];
+  const termStarts = [];
+
+  const walk = (node, depth = 0) => {
+    if (node === null || node === undefined || depth > maxDepth) return;
+    if (typeof node === 'string') {
+      const parsed = embeddedJson(node);
+      if (parsed) walk(parsed, depth + 1);
+      return;
+    }
+    if (typeof node !== 'object' || visited.has(node)) return;
+    visited.add(node);
+    if (Array.isArray(node)) {
+      node.forEach((item) => walk(item, depth + 1));
+      return;
+    }
+    const belongsToRequestedTerm = itemMatchesRequestedTerm(node, context).matches;
+    for (const [key, value] of Object.entries(node)) {
+      const normalizedKey = String(key).toLowerCase();
+      if (belongsToRequestedTerm && TOTAL_WEEKS_KEYS.has(normalizedKey)) {
+        const weeks = Number(value);
+        if (Number.isInteger(weeks) && weeks >= 1 && weeks <= 60) totalWeeksValues.push(weeks);
+      }
+      if (belongsToRequestedTerm && TERM_START_KEYS.has(normalizedKey)) {
+        const text = normalizeText(value);
+        const match = text.match(/^(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+        if (match) termStarts.push(`${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`);
+      }
+      walk(value, depth + 1);
+    }
+  };
+
+  walk(data);
+  return {
+    explicitTotalWeeks: totalWeeksValues.length ? Math.max(...totalWeeksValues) : null,
+    explicitTermStart: termStarts[0] || ''
+  };
+}
+
 export function analyzeJwxtImport(data, context = {}) {
   const totalStart = nowMs();
   const collectionStart = nowMs();
@@ -451,8 +559,11 @@ export function analyzeJwxtImport(data, context = {}) {
   const errors = [];
   let recognized = 0;
   let filtered = 0;
+  let filteredWrongTermCount = 0;
   const responseTermCounts = new Map();
+  const acceptedResponseTermCounts = new Map();
   let incompleteResponseTermCount = 0;
+  const scheduleMetadata = extractScheduleMetadata(data, context);
 
   collected.candidates.forEach(({ item, source, sourceIndex }, index) => {
     const candidateId = `candidate-${index + 1}`;
@@ -466,8 +577,10 @@ export function analyzeJwxtImport(data, context = {}) {
     const dayResult = parseDayDetailed(item);
     const sectionResult = parseSectionsDetailed(item);
     const weekResult = parseWeeksDetailed(explicitWeeks, weekText, { maxWeeks: context.maxWeeks || 30 });
-    const responseXnm = normalizeText(item.xnm || item.XNM || '');
-    const responseXqm = normalizeText(item.xqm || item.XQM || '');
+    const termMatch = itemMatchesRequestedTerm(item, context);
+    const responseXnm = termMatch.response.xnm;
+    const responseXqm = termMatch.response.xqm;
+    const responseTermLabel = termMatch.response.label;
     if (responseXnm && responseXqm) {
       const key = `${responseXnm}\u0000${responseXqm}`;
       responseTermCounts.set(key, (responseTermCounts.get(key) || 0) + 1);
@@ -492,13 +605,15 @@ export function analyzeJwxtImport(data, context = {}) {
       classGroup,
       responseXnm,
       responseXqm,
+      responseTermLabel,
       result: 'accepted',
       reasonCode: null,
       humanReadableReason: '',
       producedCourseCount: 0
     };
 
-    if (!name) rejection(diag, IMPORT_REASON_CODES.MISSING_NAME, '缺少课程名称。');
+    if (!termMatch.matches) rejection(diag, IMPORT_REASON_CODES.FILTERED_WRONG_TERM, '原始课程记录不属于本次冻结的学期。');
+    else if (!name) rejection(diag, IMPORT_REASON_CODES.MISSING_NAME, '缺少课程名称。');
     else if (!dayResult.ok) rejection(diag, dayResult.reasonCode, dayResult.humanReadableReason);
     else if (!sectionResult.ok) rejection(diag, sectionResult.reasonCode, sectionResult.humanReadableReason);
     else if (!weekResult.ok) rejection(diag, weekResult.reasonCode, weekResult.humanReadableReason);
@@ -507,12 +622,17 @@ export function analyzeJwxtImport(data, context = {}) {
     if (diag.result !== 'accepted') {
       diag.safeSectionFields = safeFailedSectionFields(item);
       filtered += 1;
+      if (diag.reasonCode === IMPORT_REASON_CODES.FILTERED_WRONG_TERM) filteredWrongTermCount += 1;
       errors.push({ reasonCode: diag.reasonCode, message: diag.humanReadableReason, candidateId });
       diagnostics.push(diag);
       return;
     }
 
     recognized += 1;
+    if (responseXnm && responseXqm) {
+      const key = `${responseXnm}\u0000${responseXqm}`;
+      acceptedResponseTermCounts.set(key, (acceptedResponseTermCounts.get(key) || 0) + 1);
+    }
     const adjusted = /调|tk|adjust/i.test(`${source} ${item.tkbz || ''} ${item.bz || ''} ${name}`);
     const storedName = adjusted && !name.includes('调') ? `【调】${name}` : name;
     for (const slot of sectionResult.slots) {
@@ -536,9 +656,10 @@ export function analyzeJwxtImport(data, context = {}) {
         source: 'jwxt',
         sourceDetail: source,
         sourceIndex,
-        termKey: `${context.xnm || ''}:${context.xqm || ''}`,
+        termKey: String(context.termKey || `${context.accountId || ''}:${context.xnm || ''}:${context.xqm || ''}`),
         xnm: responseXnm || String(context.xnm || ''),
         xqm: responseXqm || String(context.xqm || ''),
+        selectedTermLabel: String(context.selectedTermLabel || ''),
         isAdjusted: adjusted,
         importTraceId: context.traceId || '',
         _candidateId: candidateId
@@ -578,24 +699,45 @@ export function analyzeJwxtImport(data, context = {}) {
   }
 
   const accepted = generated.length;
+  const rawCount = collected.candidates.length + collected.filteredUnknownSourceCount;
+  const filteredUnknownSourceCount = collected.filteredUnknownSourceCount;
+  const importedCount = mergeResult.courses.length;
   const summary = {
-    received: collected.candidates.length,
+    received: rawCount,
     recognized,
     accepted,
-    filtered,
+    filtered: filtered + filteredUnknownSourceCount,
     merged: mergeResult.events.length,
-    written: mergeResult.courses.length,
+    written: importedCount,
     beforeCount: 0,
-    afterCount: 0
+    afterCount: 0,
+    rawCount,
+    acceptedCount: recognized,
+    importedCount,
+    filteredWrongTermCount,
+    filteredUnknownSourceCount
   };
   const responseTerms = [...responseTermCounts.entries()].map(([key, count]) => {
     const [xnm, xqm] = key.split('\u0000');
     return { xnm, xqm, count };
   });
+  const acceptedResponseTerms = [...acceptedResponseTermCounts.entries()].map(([key, count]) => {
+    const [xnm, xqm] = key.split('\u0000');
+    return { xnm, xqm, count };
+  });
   return {
+    selectedTermLabel: String(context.selectedTermLabel || ''),
+    xnm: String(context.xnm || ''),
+    xqm: String(context.xqm || ''),
     rawResponseType: collected.rawResponseType,
     candidateSources: Object.keys(collected.sourceCounts),
     sourceCounts: collected.sourceCounts,
+    unknownSourceCounts: collected.unknownSourceCounts,
+    rawCount,
+    acceptedCount: recognized,
+    filteredWrongTermCount,
+    filteredUnknownSourceCount,
+    importedCount,
     candidates: diagnostics,
     courses: mergeResult.courses.map(({ _candidateId, ...course }) => course),
     mergeEvents: mergeResult.events,
@@ -603,7 +745,10 @@ export function analyzeJwxtImport(data, context = {}) {
     warnings,
     errors,
     responseTerms,
+    acceptedResponseTerms,
     incompleteResponseTermCount,
+    explicitTotalWeeks: scheduleMetadata.explicitTotalWeeks,
+    explicitTermStart: scheduleMetadata.explicitTermStart,
     timings: {
       collectionMs,
       parsingMs,

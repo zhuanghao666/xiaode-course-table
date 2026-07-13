@@ -268,13 +268,16 @@ test('courses, settings, reminders and imports are isolated by accountId', async
       selectedTermLabel: '2026-2027 第一学期',
       xnm: '2026',
       xqm: '3',
+      replace: true,
       jwxtData: { kbList: [{ kcmc: 'Alpha Code Import', xnm: '2026', xqm: '3', xqj: 5, ksjc: 5, jsjc: 5, zcd: '1-2周', xm: 'Teacher A', cdmc: 'Room A' }] }
     }
   });
   assert.equal(codeSubmit.status, 200);
   const meAAfterCode = await request(baseUrl, '/api/auth/me', { token: tokenA });
   const meBAfterCode = await request(baseUrl, '/api/auth/me', { token: tokenB });
-  assert.deepEqual(meAAfterCode.data.courses.map((course) => course.name), ['Alpha Imported', 'Alpha Code Import']);
+  assert.deepEqual(meAAfterCode.data.courses.map((course) => course.name), ['Alpha Code Import']);
+  assert.equal(meAAfterCode.data.activeTerm.termKey, 'account-a:2026:3');
+  assert.ok(meAAfterCode.data.availableTerms.some((term) => term.termKey === 'account-a:legacy'));
   assert.deepEqual(meBAfterCode.data.courses.map((course) => course.name), ['B-化学-导入替换']);
 
   const invalidToken = await request(baseUrl, '/api/auth/me', { token: 'invalid-token' });

@@ -20,8 +20,9 @@ const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FIL
   : path.join(__dirname, '..', 'data', 'db.json');
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
-const APP_VERSION = 'v40-dev';
-const DB_SCHEMA_VERSION = 4;
+const APP_VERSION = 'v41-dev';
+const DB_SCHEMA_VERSION = 5;
+const DEFAULT_TOTAL_WEEKS = 20;
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
 const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
 const importDiagnosticsStore = createImportDiagnosticsStore({ dataFile: DATA_FILE });
@@ -210,15 +211,50 @@ function createAccountFromUser(user) {
   };
 }
 
+function buildTermKey(accountId, xnm, xqm) {
+  return `${String(accountId || '').trim()}:${String(xnm || '').trim()}:${String(xqm || '').trim()}`;
+}
+
+function legacyTermKey(accountId) {
+  return `${String(accountId || '').trim()}:legacy`;
+}
+
+function normalizeTotalWeeks(value, fallback = DEFAULT_TOTAL_WEEKS) {
+  const weeks = Number(value);
+  if (!Number.isInteger(weeks) || weeks < 1 || weeks > 60) return fallback;
+  return weeks;
+}
+
+function normalizeDateText(value = '') {
+  const text = String(value || '').trim();
+  return /^20\d{2}-\d{2}-\d{2}$/.test(text) ? text : '';
+}
+
+function normalizeLegacyCourseTerm(course, accountId) {
+  let xnm = String(course.xnm || '').trim();
+  let xqm = String(course.xqm || '').trim();
+  const oldTermKey = String(course.termKey || '').trim();
+  if ((!xnm || !xqm) && /^\d{4}:\d{1,4}$/.test(oldTermKey)) [xnm, xqm] = oldTermKey.split(':');
+  if (xnm && xqm) {
+    return {
+      termKey: buildTermKey(accountId, xnm, xqm),
+      xnm,
+      xqm,
+      selectedTermLabel: String(course.selectedTermLabel || `${xnm}/${xqm}`).trim()
+    };
+  }
+  return { termKey: legacyTermKey(accountId), xnm: '', xqm: '', selectedTermLabel: '历史课程' };
+}
+
 function migrateDbToV38(input = {}) {
   const db = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const now = new Date().toISOString();
   db.meta = db.meta && typeof db.meta === 'object' && !Array.isArray(db.meta) ? db.meta : {};
   db.meta.appVersion = APP_VERSION;
   db.meta.schemaVersion = DB_SCHEMA_VERSION;
-  db.meta.storageMode = MYSQL_MIRROR_ENABLED ? 'json-primary-mysql-mirror-v39' : 'json-relational-v39';
+  db.meta.storageMode = MYSQL_MIRROR_ENABLED ? 'json-primary-mysql-mirror-v41' : 'json-term-isolated-v41';
   db.meta.storageDriver = 'json';
-  db.meta.schemaNote = 'v39 以 db.json 为主存储，MySQL 仅作镜像；课程、设置、提醒和导入按 accountId 隔离。';
+  db.meta.schemaNote = 'v41 以 db.json 为主存储；课程按 accountId + termKey 隔离，MySQL 仅作镜像。';
 
   if (!Array.isArray(db.slots) || db.slots.length < 12) db.slots = DEFAULT_12_SLOTS;
   db.slots = normalizeSlotsInput(db.slots, DEFAULT_12_SLOTS);
@@ -228,6 +264,7 @@ function migrateDbToV38(input = {}) {
   if (!Array.isArray(db.feedbacks)) db.feedbacks = [];
   if (!Array.isArray(db.importCodes)) db.importCodes = [];
   if (!Array.isArray(db.backups)) db.backups = [];
+  if (!Array.isArray(db.terms)) db.terms = [];
 
   const userIds = new Set();
   for (const user of db.users) {
@@ -262,7 +299,9 @@ function migrateDbToV38(input = {}) {
     ids.push(account.id);
     accountIdsByUser.set(account.userId, ids);
   }
-  const migrationWarnings = new Map();
+  const migrationWarnings = new Map((Array.isArray(db.meta.migrationWarnings) ? db.meta.migrationWarnings : [])
+    .filter((warning) => warning && warning.code && warning.entityType && warning.id)
+    .map((warning) => [`${warning.code}:${warning.entityType}:${warning.id}`, warning]));
   function warnUnresolved(entityType, entity, message) {
     const id = String(entity?.id || entity?.token || entity?.code || 'unknown');
     const warning = { code: 'ACCOUNT_SCOPE_UNRESOLVED', entityType, id, message };
@@ -343,7 +382,112 @@ function migrateDbToV38(input = {}) {
 
   db.courses = db.courses
     .filter((course) => course && typeof course === 'object')
-    .map((course) => resolveLegacyScope('course', course));
+    .map((course) => resolveLegacyScope('course', course))
+    .map((course) => {
+      if (!course.accountId || accountOwners.get(course.accountId) !== course.userId) return course;
+      const term = normalizeLegacyCourseTerm(course, course.accountId);
+      if (!course.termKey || course.termKey !== term.termKey) {
+        const warning = {
+          code: 'TERM_SCOPE_NORMALIZED',
+          entityType: 'course',
+          id: String(course.id || 'unknown'),
+          message: term.xnm && term.xqm ? '旧课程已按 xnm/xqm 迁移到账号学期 termKey' : '无法推断学期的旧课程已保留在 legacy termKey'
+        };
+        migrationWarnings.set(`${warning.code}:course:${warning.id}`, warning);
+      }
+      return { ...course, ...term };
+    });
+
+  const termMap = new Map();
+  for (const rawTerm of db.terms) {
+    if (!rawTerm || typeof rawTerm !== 'object') continue;
+    const accountId = String(rawTerm.accountId || '').trim();
+    const userId = String(rawTerm.userId || accountOwners.get(accountId) || '').trim();
+    if (!accountId || accountOwners.get(accountId) !== userId) continue;
+    const xnm = String(rawTerm.xnm || '').trim();
+    const xqm = String(rawTerm.xqm || '').trim();
+    const termKey = xnm && xqm ? buildTermKey(accountId, xnm, xqm) : legacyTermKey(accountId);
+    termMap.set(termKey, {
+      id: String(rawTerm.id || `term_${crypto.createHash('sha1').update(termKey).digest('hex').slice(0, 16)}`),
+      userId,
+      accountId,
+      termKey,
+      xnm,
+      xqm,
+      selectedTermLabel: String(rawTerm.selectedTermLabel || rawTerm.label || (xnm && xqm ? `${xnm}/${xqm}` : '历史课程')).trim(),
+      termStart: normalizeDateText(rawTerm.termStart),
+      totalWeeks: normalizeTotalWeeks(rawTerm.totalWeeks),
+      totalWeeksSource: String(rawTerm.totalWeeksSource || 'saved').trim() || 'saved',
+      createdAt: rawTerm.createdAt || now,
+      updatedAt: rawTerm.updatedAt || now
+    });
+  }
+
+  for (const course of db.courses) {
+    if (!course.accountId || accountOwners.get(course.accountId) !== course.userId || !course.termKey) continue;
+    const existing = termMap.get(course.termKey);
+    const maxCourseWeek = Math.max(0, ...(Array.isArray(course.weeks) ? course.weeks.map(Number).filter(Number.isFinite) : []));
+    if (existing) {
+      if (existing.totalWeeksSource === 'course-max-week' && maxCourseWeek > existing.totalWeeks) {
+        existing.totalWeeks = normalizeTotalWeeks(maxCourseWeek, existing.totalWeeks);
+      }
+      continue;
+    }
+    termMap.set(course.termKey, {
+      id: `term_${crypto.createHash('sha1').update(course.termKey).digest('hex').slice(0, 16)}`,
+      userId: course.userId,
+      accountId: course.accountId,
+      termKey: course.termKey,
+      xnm: String(course.xnm || ''),
+      xqm: String(course.xqm || ''),
+      selectedTermLabel: String(course.selectedTermLabel || (course.xnm && course.xqm ? `${course.xnm}/${course.xqm}` : '历史课程')),
+      termStart: '',
+      totalWeeks: maxCourseWeek || normalizeTotalWeeks(db.meta.totalWeeks),
+      totalWeeksSource: maxCourseWeek ? 'course-max-week' : 'legacy-default',
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  for (const account of db.accounts) {
+    const accountTerms = [...termMap.values()].filter((term) => term.accountId === account.id);
+    if (!accountTerms.length) {
+      const termKey = legacyTermKey(account.id);
+      termMap.set(termKey, {
+        id: `term_${crypto.createHash('sha1').update(termKey).digest('hex').slice(0, 16)}`,
+        userId: account.userId,
+        accountId: account.id,
+        termKey,
+        xnm: '',
+        xqm: '',
+        selectedTermLabel: '历史课程',
+        termStart: '',
+        totalWeeks: normalizeTotalWeeks(db.meta.totalWeeks),
+        totalWeeksSource: 'legacy-default',
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+    const refreshedTerms = [...termMap.values()].filter((term) => term.accountId === account.id);
+    const validExisting = refreshedTerms.find((term) => term.termKey === account.activeTermKey);
+    const latestImport = db.importCodes
+      .filter((item) => item.accountId === account.id && item.usedAt && item.xnm && item.xqm)
+      .sort((a, b) => String(b.usedAt).localeCompare(String(a.usedAt)))[0];
+    const importedKey = latestImport ? buildTermKey(account.id, latestImport.xnm, latestImport.xqm) : '';
+    const importedTerm = refreshedTerms.find((term) => term.termKey === importedKey);
+    const activeTerm = validExisting || importedTerm || refreshedTerms.find((term) => term.xnm && term.xqm) || refreshedTerms[0];
+    account.activeTermKey = activeTerm.termKey;
+
+    const oldCourseSettings = settingMap.get(account.id)?.preferences?.courseSettings || {};
+    if (activeTerm && oldCourseSettings) {
+      if (oldCourseSettings.totalWeeks && activeTerm.totalWeeksSource === 'legacy-default') {
+        activeTerm.totalWeeks = normalizeTotalWeeks(oldCourseSettings.totalWeeks, activeTerm.totalWeeks);
+        activeTerm.totalWeeksSource = 'legacy-account-setting';
+      }
+      if (oldCourseSettings.termStart && !activeTerm.termStart) activeTerm.termStart = normalizeDateText(oldCourseSettings.termStart);
+    }
+  }
+  db.terms = [...termMap.values()];
 
   db.sessions = db.sessions
     .filter((session) => session && typeof session === 'object' && session.token)
@@ -360,8 +504,49 @@ function courseBelongsToAccount(course = {}, accountId = '') {
   return Boolean(accountId) && course.accountId === accountId;
 }
 
-function coursesForAccount(db, accountId) {
+function allCoursesForAccount(db, accountId) {
   return (Array.isArray(db.courses) ? db.courses : []).filter((course) => courseBelongsToAccount(course, accountId));
+}
+
+function termsForAccount(db, accountId) {
+  return (Array.isArray(db.terms) ? db.terms : []).filter((term) => term.accountId === accountId);
+}
+
+function activeTermForAccount(db, accountId) {
+  const account = (db.accounts || []).find((item) => item.id === accountId);
+  const terms = termsForAccount(db, accountId);
+  return terms.find((term) => term.termKey === account?.activeTermKey) || terms[0] || null;
+}
+
+function coursesForAccount(db, accountId, termKey = activeTermForAccount(db, accountId)?.termKey || '') {
+  if (!termKey) return [];
+  return allCoursesForAccount(db, accountId).filter((course) => course.termKey === termKey);
+}
+
+function publicTerm(db, term) {
+  if (!term) return null;
+  return {
+    termKey: term.termKey,
+    xnm: term.xnm || '',
+    xqm: term.xqm || '',
+    selectedTermLabel: term.selectedTermLabel || '历史课程',
+    label: term.selectedTermLabel || '历史课程',
+    termStart: term.termStart || '',
+    totalWeeks: normalizeTotalWeeks(term.totalWeeks),
+    totalWeeksSource: term.totalWeeksSource || 'saved',
+    courseCount: coursesForAccount(db, term.accountId, term.termKey).length
+  };
+}
+
+function activeTermPayload(db, accountId) {
+  const activeTerm = activeTermForAccount(db, accountId);
+  return {
+    activeTerm: publicTerm(db, activeTerm),
+    availableTerms: termsForAccount(db, accountId)
+      .map((term) => publicTerm(db, term))
+      .sort((a, b) => String(b.xnm || '').localeCompare(String(a.xnm || '')) || String(b.xqm || '').localeCompare(String(a.xqm || ''))),
+    courses: coursesForAccount(db, accountId, activeTerm?.termKey)
+  };
 }
 
 function settingForAccount(db, userId, accountId) {
@@ -373,9 +558,10 @@ function reminderForAccount(db, userId, accountId) {
 }
 
 
-function normalizeCourse(input, userId, accountId) {
+function normalizeCourse(input, userId, accountId, term = null) {
   const weekText = String(input.weekText || '').trim();
-  const parsed = parseWeeksDetailed(input.weeks, weekText);
+  const parsed = parseWeeksDetailed(input.weeks, weekText, { maxWeeks: 60 });
+  const scopedTerm = term || normalizeLegacyCourseTerm(input, accountId);
   return {
     id: input.id || uid('c'),
     userId,
@@ -396,9 +582,10 @@ function normalizeCourse(input, userId, accountId) {
     sourceIndex: Number.isInteger(Number(input.sourceIndex)) ? Number(input.sourceIndex) : null,
     startSlot: Number(input.startSlot || input.slot || 0),
     endSlot: Number(input.endSlot || input.slot || 0),
-    termKey: String(input.termKey || '').slice(0, 80),
-    xnm: String(input.xnm || '').slice(0, 20),
-    xqm: String(input.xqm || '').slice(0, 20),
+    termKey: String(scopedTerm.termKey || input.termKey || legacyTermKey(accountId)).slice(0, 160),
+    xnm: String(scopedTerm.xnm || input.xnm || '').slice(0, 20),
+    xqm: String(scopedTerm.xqm || input.xqm || '').slice(0, 20),
+    selectedTermLabel: String(scopedTerm.selectedTermLabel || input.selectedTermLabel || '历史课程').slice(0, 120),
     isAdjusted: Boolean(input.isAdjusted),
     importTraceId: String(input.importTraceId || '').slice(0, 80)
   };
@@ -637,6 +824,7 @@ app.get('/api/health', (req, res) => {
     users: db.users?.length || 0,
     accounts: db.accounts?.length || 0,
     courses: db.courses?.length || 0,
+    terms: db.terms?.length || 0,
     settings: db.settings?.length || 0,
     reminders: db.reminders?.length || 0
   };
@@ -769,16 +957,54 @@ app.get('/api/auth/me', requireLogin, (req, res) => {
   const setting = settingForAccount(db, user.id, req.auth.accountId);
   const preferences = sanitizePreferences(setting?.preferences || user.preferences || {});
   const slots = Array.isArray(setting?.slots) ? normalizeSlotsInput(setting.slots, db.slots) : db.slots;
+  const termState = activeTermPayload(db, req.auth.accountId);
+  const activeTerm = termState.activeTerm;
   if (user && db.users.some((u) => u.id === user.id)) writeDb(db);
   res.json({
     ok: true,
     accountId: req.auth.accountId,
     user: publicUser(user, req.auth.accountId),
-    meta: db.meta,
+    meta: { ...db.meta, termStart: activeTerm?.termStart || '', totalWeeks: activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS },
     slots,
-    courses: coursesForAccount(db, req.auth.accountId),
+    activeTerm,
+    availableTerms: termState.availableTerms,
+    termStart: activeTerm?.termStart || '',
+    totalWeeks: activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS,
+    courses: termState.courses,
     preferences
   });
+});
+
+app.put('/api/my/active-term', requireLogin, (req, res) => {
+  const termKey = String(req.body?.termKey || '').trim();
+  if (!termKey) return res.status(400).json({ ok: false, message: 'termKey 不能为空' });
+  const db = readDb();
+  const account = accountForUser(db, req.auth.user.id, req.auth.accountId);
+  const term = termsForAccount(db, req.auth.accountId).find((item) => item.termKey === termKey);
+  if (!account || !term) return res.status(404).json({ ok: false, message: '学期不存在或不属于当前账号' });
+  account.activeTermKey = term.termKey;
+  account.updatedAt = new Date().toISOString();
+  writeDb(db);
+  const payload = activeTermPayload(db, req.auth.accountId);
+  res.json({ ok: true, accountId: req.auth.accountId, ...payload });
+});
+
+app.put('/api/my/active-term/settings', requireLogin, (req, res) => {
+  const db = readDb();
+  const term = activeTermForAccount(db, req.auth.accountId);
+  if (!term) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
+  const totalWeeks = Number(req.body?.totalWeeks);
+  const termStart = String(req.body?.termStart || '').trim();
+  if (!Number.isInteger(totalWeeks) || totalWeeks < 1 || totalWeeks > 60) {
+    return res.status(400).json({ ok: false, message: '学期总周数必须是 1 到 60 的整数' });
+  }
+  if (termStart && !normalizeDateText(termStart)) return res.status(400).json({ ok: false, message: '开学日期格式应为 YYYY-MM-DD' });
+  term.totalWeeks = totalWeeks;
+  term.totalWeeksSource = 'manual';
+  term.termStart = normalizeDateText(termStart);
+  term.updatedAt = new Date().toISOString();
+  writeDb(db);
+  res.json({ ok: true, accountId: req.auth.accountId, activeTerm: publicTerm(db, term) });
 });
 
 app.put('/api/auth/password', requireLogin, (req, res) => {
@@ -861,6 +1087,7 @@ app.delete('/api/my/slots', requireLogin, (req, res) => {
 
 function buildUserBackup(db, user, accountId) {
   const setting = settingForAccount(db, user.id, accountId);
+  const termState = activeTermPayload(db, accountId);
   return {
     app: 'xiaode-course-table',
     appVersion: APP_VERSION,
@@ -876,7 +1103,9 @@ function buildUserBackup(db, user, accountId) {
       username: user.username
     },
     preferences: sanitizePreferences(setting?.preferences || user.preferences || {}),
-    meta: db.meta,
+    meta: { ...db.meta, termStart: termState.activeTerm?.termStart || '', totalWeeks: termState.activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS },
+    activeTerm: termState.activeTerm,
+    availableTerms: termState.availableTerms,
     slots: Array.isArray(setting?.slots) ? normalizeSlotsInput(setting.slots, db.slots) : db.slots,
     courses: coursesForAccount(db, accountId)
       .map((course) => {
@@ -940,12 +1169,22 @@ function termView(xnm, xqm, label, verifiedByResponse = false) {
 
 function resolveEffectiveImportTerm(analysis, requested) {
   const responseTerms = Array.isArray(analysis.responseTerms) ? analysis.responseTerms : [];
-  if (!responseTerms.length) {
+  const acceptedResponseTerms = Array.isArray(analysis.acceptedResponseTerms) ? analysis.acceptedResponseTerms : [];
+  if (!acceptedResponseTerms.length) {
+    if (analysis.filteredWrongTermCount > 0) {
+      const effective = responseTerms.length === 1 ? responseTerms[0] : { xnm: '', xqm: '' };
+      return {
+        ok: false,
+        requestedTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel),
+        effectiveTerm: termView(effective.xnm, effective.xqm, effective.xnm && effective.xqm ? `${effective.xnm}/${effective.xqm}` : '响应不属于所选学期', true),
+        responseTerms
+      };
+    }
     return { ok: true, requestedTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel), effectiveTerm: termView('', '', '', false) };
   }
-  const mismatched = responseTerms.filter((term) => term.xnm !== requested.xnm || term.xqm !== requested.xqm);
-  if (mismatched.length || responseTerms.length !== 1) {
-    const effective = responseTerms.length === 1 ? responseTerms[0] : { xnm: '', xqm: '' };
+  const mismatched = acceptedResponseTerms.filter((term) => term.xnm !== requested.xnm || term.xqm !== requested.xqm);
+  if (mismatched.length || acceptedResponseTerms.length !== 1) {
+    const effective = acceptedResponseTerms.length === 1 ? acceptedResponseTerms[0] : { xnm: '', xqm: '' };
     return {
       ok: false,
       requestedTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel),
@@ -989,18 +1228,28 @@ function addPreImportBackup(db, user, accountId, traceId, xnm, xqm) {
 function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, selectedTermLabel, trace, importCode = '' }) {
   const requested = validateImportTermParams({ xnm, xqm, selectedTermLabel });
   if (!requested.ok) return importFailure(trace, 400, requested.reasonCode, requested.message);
+  const termKey = buildTermKey(accountId, requested.xnm, requested.xqm);
+  const existingTerm = termsForAccount(db, accountId).find((term) => term.termKey === termKey) || null;
   const analysis = analyzeJwxtImport(jwxtData, {
     traceId: trace.traceId,
     userId: user.id,
     accountId,
+    termKey,
     xnm: requested.xnm,
     xqm: requested.xqm,
-    maxWeeks: Math.max(20, Number(db.meta?.totalWeeks || 20))
+    selectedTermLabel: requested.selectedTermLabel,
+    maxWeeks: 60
   });
   const traceBase = {
     rawResponseType: analysis.rawResponseType,
     candidateSources: analysis.candidateSources,
     sourceCounts: analysis.sourceCounts,
+    unknownSourceCounts: analysis.unknownSourceCounts,
+    rawCount: analysis.rawCount,
+    acceptedCount: analysis.acceptedCount,
+    filteredWrongTermCount: analysis.filteredWrongTermCount,
+    filteredUnknownSourceCount: analysis.filteredUnknownSourceCount,
+    importedCount: analysis.importedCount,
     candidates: analysis.candidates,
     mergeEvents: analysis.mergeEvents,
     summary: analysis.summary,
@@ -1031,15 +1280,33 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     return importFailure(trace, 422, reasonCode, '已收到教务数据，但所有候选均未通过安全解析。', { ...traceBase, ...termTrace });
   }
 
+  const courseMaxWeek = Math.max(0, ...analysis.courses.flatMap((course) => Array.isArray(course.weeks) ? course.weeks.map(Number).filter(Number.isFinite) : []));
+  let totalWeeks = DEFAULT_TOTAL_WEEKS;
+  let totalWeeksSource = 'default';
+  if (analysis.explicitTotalWeeks) {
+    totalWeeks = normalizeTotalWeeks(analysis.explicitTotalWeeks);
+    totalWeeksSource = 'jwxt-response';
+  } else if (courseMaxWeek) {
+    totalWeeks = normalizeTotalWeeks(courseMaxWeek);
+    totalWeeksSource = 'course-max-week';
+  } else if (existingTerm?.totalWeeks) {
+    totalWeeks = normalizeTotalWeeks(existingTerm.totalWeeks);
+    totalWeeksSource = existingTerm.totalWeeksSource || 'saved';
+  }
+  const targetTerm = {
+    termKey,
+    xnm: requested.xnm,
+    xqm: requested.xqm,
+    selectedTermLabel: requested.selectedTermLabel
+  };
   const normalized = analysis.courses
-    .map((item) => normalizeCourse(item, user.id, accountId))
+    .map((item) => normalizeCourse(item, user.id, accountId, targetTerm))
     .filter((course) => course.name && course.day >= 1 && course.day <= 7 && course.slot >= 1 && course.slot <= 12 && course.weeks.length);
   if (!normalized.length || normalized.some((course) => course.accountId !== accountId)) {
     return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '规范化结果为空或 accountId 校验失败。', { ...traceBase, ...termTrace });
   }
 
-  const termKey = `${requested.xnm}:${requested.xqm}`;
-  const beforeCount = coursesForAccount(db, accountId).length;
+  const beforeCount = coursesForAccount(db, accountId, termKey).length;
   const nextDb = cloneDb(db);
   const existingSameTerm = nextDb.courses.filter((course) => isJwxtCourseForTerm(course, accountId, termKey));
   const preserved = nextDb.courses.filter((course) => !isJwxtCourseForTerm(course, accountId, termKey));
@@ -1060,6 +1327,29 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
   addPreImportBackup(nextDb, user, accountId, trace.traceId, requested.xnm, requested.xqm);
   nextDb.courses = nextCourses;
   const importedAt = new Date().toISOString();
+  const nextAccount = accountForUser(nextDb, user.id, accountId);
+  if (!nextAccount) {
+    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入账号不存在，旧课程保持不变。', { ...traceBase, ...termTrace });
+  }
+  const nextTerm = termsForAccount(nextDb, accountId).find((term) => term.termKey === termKey);
+  const savedTerm = {
+    id: nextTerm?.id || `term_${crypto.createHash('sha1').update(termKey).digest('hex').slice(0, 16)}`,
+    userId: user.id,
+    accountId,
+    termKey,
+    xnm: requested.xnm,
+    xqm: requested.xqm,
+    selectedTermLabel: requested.selectedTermLabel,
+    termStart: analysis.explicitTermStart || nextTerm?.termStart || '',
+    totalWeeks,
+    totalWeeksSource,
+    createdAt: nextTerm?.createdAt || importedAt,
+    updatedAt: importedAt,
+    lastImportTraceId: trace.traceId
+  };
+  nextDb.terms = [...termsForAccount(nextDb, accountId).filter((term) => term.termKey !== termKey), savedTerm, ...(nextDb.terms || []).filter((term) => term.accountId !== accountId)];
+  nextAccount.activeTermKey = termKey;
+  nextAccount.updatedAt = importedAt;
   if (importCode) {
     const record = nextDb.importCodes.find((item) => item.code === importCode);
     if (record) {
@@ -1073,13 +1363,18 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
   nextDb.meta.lastAndroidImportAccountId = accountId;
   nextDb.meta.lastImportTraceId = trace.traceId;
   nextDb.meta.courseVersion = Number(nextDb.meta.courseVersion || 0) + 1;
-  const afterCount = nextCourses.filter((course) => courseBelongsToAccount(course, accountId)).length;
+  const afterCount = nextCourses.filter((course) => courseBelongsToAccount(course, accountId) && course.termKey === termKey).length;
   const summary = {
     ...analysis.summary,
     merged: analysis.summary.merged + appendMergeEvents.length,
     written: normalized.length,
     beforeCount,
-    afterCount
+    afterCount,
+    rawCount: analysis.rawCount,
+    acceptedCount: analysis.acceptedCount,
+    filteredWrongTermCount: analysis.filteredWrongTermCount,
+    filteredUnknownSourceCount: analysis.filteredUnknownSourceCount,
+    importedCount: normalized.length
   };
   const writeStart = process.hrtime.bigint();
   try {
@@ -1102,6 +1397,10 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     message: `收到 ${summary.received} 条，识别 ${summary.recognized} 条，写入 ${summary.written} 条，合并 ${summary.merged} 条，过滤 ${summary.filtered} 条。`,
     summary,
     warnings,
+    importedCount: normalized.length,
+    totalWeeks,
+    totalWeeksSource,
+    termStart: savedTerm.termStart,
     mergeEvents: [...analysis.mergeEvents, ...appendMergeEvents],
     timings: { ...analysis.timings, writeMs: Number(writeMs.toFixed(3)) }
   });
@@ -1115,6 +1414,10 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
       warnings,
       requestedTerm: resolvedTerm.requestedTerm,
       effectiveTerm: resolvedTerm.effectiveTerm,
+      activeTerm: publicTerm(nextDb, savedTerm),
+      totalWeeks,
+      totalWeeksSource,
+      termStart: savedTerm.termStart,
       refreshRequired: true,
       count: summary.written,
       rawCount: summary.received,
@@ -1147,7 +1450,7 @@ function unpackBackupPayload(input = {}) {
   return { courses, slots };
 }
 
-function normalizeBackupForAccount(input, userId, accountId, defaultSlots = []) {
+function normalizeBackupForAccount(input, userId, accountId, defaultSlots = [], term = null) {
   const { courses, slots } = unpackBackupPayload(input);
   const normalizedCourses = courses
     .map((item) => {
@@ -1155,7 +1458,8 @@ function normalizeBackupForAccount(input, userId, accountId, defaultSlots = []) 
       delete cloned.id;
       delete cloned.userId;
       delete cloned.accountId;
-      return normalizeCourse(cloned, userId, accountId);
+      delete cloned.termKey;
+      return normalizeCourse(cloned, userId, accountId, term);
     })
     .filter((course) => course.name && course.day && course.slot);
   const normalizedSlots = Array.isArray(slots) && slots.length ? normalizeSlotsInput(slots, defaultSlots) : null;
@@ -1176,13 +1480,15 @@ app.post('/api/my/restore', requireLogin, (req, res) => {
   const setting = settingForAccount(db, user.id, req.auth.accountId);
   const reminder = reminderForAccount(db, user.id, req.auth.accountId);
   if (!setting || !reminder) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
-  const normalized = normalizeBackupForAccount(backup || req.body, user.id, req.auth.accountId, db.slots);
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
+  if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
+  const normalized = normalizeBackupForAccount(backup || req.body, user.id, req.auth.accountId, db.slots, activeTerm);
   if (!normalized.courses.length && !normalized.slots) {
     return res.status(400).json({ ok: false, message: '备份文件里没有可恢复的课程或节次时间' });
   }
 
   if (mode === 'replace') {
-    db.courses = db.courses.filter((course) => !courseBelongsToAccount(course, req.auth.accountId));
+    db.courses = db.courses.filter((course) => !(courseBelongsToAccount(course, req.auth.accountId) && course.termKey === activeTerm.termKey));
   }
   db.courses = db.courses.concat(normalized.courses);
   if (normalized.slots) {
@@ -1206,8 +1512,10 @@ app.post('/api/my/reset', requireLogin, (req, res) => {
   const db = readDb();
   const user = db.users.find((u) => u.id === req.auth.user.id);
   if (!user) return res.status(404).json({ ok: false, message: '账号不存在' });
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
+  if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
   const before = db.courses.length;
-  db.courses = db.courses.filter((course) => !courseBelongsToAccount(course, req.auth.accountId));
+  db.courses = db.courses.filter((course) => !(courseBelongsToAccount(course, req.auth.accountId) && course.termKey === activeTerm.termKey));
   const count = before - db.courses.length;
   if (resetSlots) {
     const setting = settingForAccount(db, user.id, req.auth.accountId);
@@ -1223,15 +1531,18 @@ app.post('/api/my/reset', requireLogin, (req, res) => {
 
 app.get('/api/my/courses', requireLogin, (req, res) => {
   const db = readDb();
-  res.json({ ok: true, accountId: req.auth.accountId, courses: coursesForAccount(db, req.auth.accountId) });
+  const payload = activeTermPayload(db, req.auth.accountId);
+  res.json({ ok: true, accountId: req.auth.accountId, ...payload });
 });
 
 app.post('/api/my/courses', requireLogin, (req, res) => {
-  const course = normalizeCourse(req.body || {}, req.auth.user.id, req.auth.accountId);
+  const db = readDb();
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
+  if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
+  const course = normalizeCourse(req.body || {}, req.auth.user.id, req.auth.accountId, activeTerm);
   if (!course.name || !course.day || !course.slot) {
     return res.status(400).json({ ok: false, message: '课程名、星期、节次必填' });
   }
-  const db = readDb();
   db.courses.push(course);
   writeDb(db);
   res.json({ ok: true, course });
@@ -1239,19 +1550,21 @@ app.post('/api/my/courses', requireLogin, (req, res) => {
 
 app.put('/api/my/courses/:id', requireLogin, (req, res) => {
   const db = readDb();
-  const idx = db.courses.findIndex((c) => c.id === req.params.id && courseBelongsToAccount(c, req.auth.accountId));
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
+  const idx = db.courses.findIndex((c) => c.id === req.params.id && courseBelongsToAccount(c, req.auth.accountId) && c.termKey === activeTerm?.termKey);
   if (idx === -1) {
     return res.status(404).json({ ok: false, message: '课程不存在或不属于你' });
   }
-  db.courses[idx] = normalizeCourse({ ...db.courses[idx], ...req.body, id: req.params.id }, req.auth.user.id, req.auth.accountId);
+  db.courses[idx] = normalizeCourse({ ...db.courses[idx], ...req.body, id: req.params.id }, req.auth.user.id, req.auth.accountId, activeTerm);
   writeDb(db);
   res.json({ ok: true, course: db.courses[idx] });
 });
 
 app.delete('/api/my/courses', requireLogin, (req, res) => {
   const db = readDb();
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
   const before = db.courses.length;
-  db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, req.auth.accountId));
+  db.courses = db.courses.filter((c) => !(courseBelongsToAccount(c, req.auth.accountId) && c.termKey === activeTerm?.termKey));
   const count = before - db.courses.length;
   writeDb(db);
   res.json({ ok: true, count });
@@ -1259,8 +1572,9 @@ app.delete('/api/my/courses', requireLogin, (req, res) => {
 
 app.delete('/api/my/courses/:id', requireLogin, (req, res) => {
   const db = readDb();
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
   const before = db.courses.length;
-  db.courses = db.courses.filter((c) => !(c.id === req.params.id && courseBelongsToAccount(c, req.auth.accountId)));
+  db.courses = db.courses.filter((c) => !(c.id === req.params.id && courseBelongsToAccount(c, req.auth.accountId) && c.termKey === activeTerm?.termKey));
   if (db.courses.length === before) {
     return res.status(404).json({ ok: false, message: '课程不存在或不属于你' });
   }
@@ -1274,12 +1588,14 @@ app.post('/api/my/import', requireLogin, (req, res) => {
     return res.status(400).json({ ok: false, message: 'courses 必须是数组' });
   }
   const db = readDb();
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
+  if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
   const normalized = courses
-    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId))
+    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId, activeTerm))
     .filter((c) => c.name && c.day && c.slot);
 
   if (replace) {
-    db.courses = db.courses.filter((c) => !courseBelongsToAccount(c, req.auth.accountId)).concat(normalized);
+    db.courses = db.courses.filter((c) => !(courseBelongsToAccount(c, req.auth.accountId) && c.termKey === activeTerm.termKey)).concat(normalized);
   } else {
     db.courses = db.courses.concat(normalized);
   }
@@ -1376,7 +1692,14 @@ app.get('/api/import-code/:code', (req, res) => {
 
 app.post('/api/import-code/:code/submit', (req, res) => {
   const code = String(req.params.code || '').trim().toUpperCase();
-  const { jwxtData, accountId: submittedAccountId, selectedTermLabel: submittedTermLabel = '', xnm: submittedXnm = '', xqm: submittedXqm = '' } = req.body || {};
+  const {
+    jwxtData,
+    accountId: submittedAccountId = '',
+    selectedTermLabel: submittedTermLabel = '',
+    xnm: submittedXnm = '',
+    xqm: submittedXqm = '',
+    replace: submittedReplace
+  } = req.body || {};
 
   const db = readDb();
   ensureImportCodes(db);
@@ -1394,7 +1717,7 @@ app.post('/api/import-code/:code/submit', (req, res) => {
     const failed = importFailure(trace, 410, IMPORT_REASON_CODES.EXPIRED_IMPORT_CODE, '导入码已过期，请重新生成。');
     return res.status(failed.status).json(failed.body);
   }
-  if (submittedAccountId && String(submittedAccountId) !== record.accountId) {
+  if (String(submittedAccountId).trim() !== record.accountId) {
     const failed = importFailure(trace, 403, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入码与当前 accountId 不匹配。');
     return res.status(failed.status).json(failed.body);
   }
@@ -1405,6 +1728,10 @@ app.post('/api/import-code/:code/submit', (req, res) => {
   }
   if (String(submittedXnm).trim() !== term.xnm || String(submittedXqm).trim() !== term.xqm || String(submittedTermLabel).trim() !== term.selectedTermLabel) {
     const failed = importFailure(trace, 403, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, 'Android 冻结的学期与导入码绑定学期不一致。');
+    return res.status(failed.status).json(failed.body);
+  }
+  if (typeof submittedReplace !== 'boolean' || submittedReplace !== Boolean(record.replace)) {
+    const failed = importFailure(trace, 403, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, 'Android 冻结的覆盖模式与导入码绑定值不一致。');
     return res.status(failed.status).json(failed.body);
   }
   if (!jwxtData || typeof jwxtData !== 'object') {
@@ -1547,6 +1874,15 @@ app.get('/api/my/import-diagnostics/latest', requireLogin, (req, res) => {
       effectiveTerm: trace.effectiveTerm || null,
       xnm: trace.xnm || '',
       xqm: trace.xqm || '',
+      sourceCounts: trace.sourceCounts || {},
+      rawCount: trace.rawCount || trace.summary?.rawCount || 0,
+      acceptedCount: trace.acceptedCount || trace.summary?.acceptedCount || 0,
+      filteredWrongTermCount: trace.filteredWrongTermCount || trace.summary?.filteredWrongTermCount || 0,
+      filteredUnknownSourceCount: trace.filteredUnknownSourceCount || trace.summary?.filteredUnknownSourceCount || 0,
+      importedCount: trace.importedCount || trace.summary?.importedCount || 0,
+      totalWeeks: trace.totalWeeks || 0,
+      totalWeeksSource: trace.totalWeeksSource || '',
+      termStart: trace.termStart || '',
       timings: trace.timings || {}
     }
   });

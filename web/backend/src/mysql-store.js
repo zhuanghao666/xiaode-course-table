@@ -258,6 +258,21 @@ async function ensureAppStateTable(conn) {
   }
 }
 
+async function ensureColumn(conn, tableName, columnName, definition) {
+  const columns = await tableColumns(conn, tableName);
+  if (columns.some((column) => String(column.COLUMN_NAME).toLowerCase() === columnName.toLowerCase())) return;
+  await conn.query(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${definition}`);
+}
+
+async function ensureIndex(conn, tableName, indexName, columns) {
+  const [rows] = await conn.query(
+    `SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1`,
+    [databaseName(), tableName, indexName]
+  );
+  if (rows.length) return;
+  await conn.query(`ALTER TABLE ${quoteIdentifier(tableName)} ADD INDEX ${quoteIdentifier(indexName)} (${columns.map(quoteIdentifier).join(', ')})`);
+}
+
 async function ensureTables(conn) {
   await ensureAppStateTable(conn);
   await recordAppStateMigrationHistory(conn);
@@ -286,6 +301,7 @@ async function ensureTables(conn) {
       name VARCHAR(120),
       role VARCHAR(40),
       status VARCHAR(40),
+      active_term_key VARCHAR(160),
       created_at VARCHAR(40),
       updated_at VARCHAR(40),
       raw_json LONGTEXT,
@@ -309,9 +325,30 @@ async function ensureTables(conn) {
       weeks_json LONGTEXT,
       odd_even VARCHAR(40),
       category VARCHAR(80),
+      term_key VARCHAR(160),
+      xnm VARCHAR(20),
+      xqm VARCHAR(20),
+      selected_term_label VARCHAR(160),
       raw_json LONGTEXT,
       INDEX idx_courses_account_day_slot (account_id, day, slot),
       INDEX idx_courses_user_id (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS terms (
+      term_key VARCHAR(160) PRIMARY KEY,
+      account_id VARCHAR(80) NOT NULL,
+      user_id VARCHAR(80) NOT NULL,
+      xnm VARCHAR(20),
+      xqm VARCHAR(20),
+      selected_term_label VARCHAR(160),
+      term_start VARCHAR(20),
+      total_weeks INT,
+      total_weeks_source VARCHAR(80),
+      updated_at VARCHAR(40),
+      raw_json LONGTEXT,
+      INDEX idx_terms_account_id (account_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
@@ -407,6 +444,14 @@ async function ensureTables(conn) {
       INDEX idx_backups_account_id (account_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  // 旧镜像表采用幂等列迁移，不能要求用户删除数据库。
+  await ensureColumn(conn, 'accounts', 'active_term_key', 'VARCHAR(160) NULL');
+  await ensureColumn(conn, 'courses', 'term_key', 'VARCHAR(160) NULL');
+  await ensureColumn(conn, 'courses', 'xnm', 'VARCHAR(20) NULL');
+  await ensureColumn(conn, 'courses', 'xqm', 'VARCHAR(20) NULL');
+  await ensureColumn(conn, 'courses', 'selected_term_label', 'VARCHAR(160) NULL');
+  await ensureIndex(conn, 'courses', 'idx_courses_account_term', ['account_id', 'term_key']);
 }
 
 async function openConfiguredPool() {
@@ -461,7 +506,7 @@ async function upsertState(conn, db) {
 }
 
 async function clearMirrorTables(conn) {
-  const tables = ['users', 'accounts', 'courses', 'settings', 'reminders', 'sessions', 'slots', 'feedbacks', 'import_codes', 'backups'];
+  const tables = ['users', 'accounts', 'courses', 'terms', 'settings', 'reminders', 'sessions', 'slots', 'feedbacks', 'import_codes', 'backups'];
   for (const table of tables) await conn.query(`DELETE FROM ${quoteIdentifier(table)}`);
 }
 
@@ -480,17 +525,25 @@ async function insertMirrorRows(conn, db) {
 
   for (const a of db.accounts || []) {
     await conn.query(
-      `INSERT INTO accounts (id, user_id, username, name, role, status, created_at, updated_at, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [a.id, a.userId || '', a.username || '', a.name || '', a.role || '', a.status || '', a.createdAt || '', a.updatedAt || '', j(a)]
+      `INSERT INTO accounts (id, user_id, username, name, role, status, active_term_key, created_at, updated_at, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [a.id, a.userId || '', a.username || '', a.name || '', a.role || '', a.status || '', a.activeTermKey || '', a.createdAt || '', a.updatedAt || '', j(a)]
     );
   }
 
   for (const c of db.courses || []) {
     await conn.query(
-      `INSERT INTO courses (id, user_id, account_id, day, slot, name, short_name, teacher, location, class_group, week_text, weeks_json, odd_even, category, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [c.id, c.userId || '', c.accountId || c.userId || '', Number(c.day || 0), Number(c.slot || 0), c.name || '', c.shortName || '', c.teacher || '', c.location || '', c.classGroup || '', c.weekText || '', j(c.weeks || []), c.oddEven || 'all', c.category || 'custom', j(c)]
+      `INSERT INTO courses (id, user_id, account_id, day, slot, name, short_name, teacher, location, class_group, week_text, weeks_json, odd_even, category, term_key, xnm, xqm, selected_term_label, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [c.id, c.userId || '', c.accountId || c.userId || '', Number(c.day || 0), Number(c.slot || 0), c.name || '', c.shortName || '', c.teacher || '', c.location || '', c.classGroup || '', c.weekText || '', j(c.weeks || []), c.oddEven || 'all', c.category || 'custom', c.termKey || '', c.xnm || '', c.xqm || '', c.selectedTermLabel || '', j(c)]
+    );
+  }
+
+  for (const term of db.terms || []) {
+    await conn.query(
+      `INSERT INTO terms (term_key, account_id, user_id, xnm, xqm, selected_term_label, term_start, total_weeks, total_weeks_source, updated_at, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [term.termKey, term.accountId || '', term.userId || '', term.xnm || '', term.xqm || '', term.selectedTermLabel || '', term.termStart || '', Number(term.totalWeeks || 0), term.totalWeeksSource || '', term.updatedAt || '', j(term)]
     );
   }
 
@@ -576,6 +629,7 @@ async function syncNow(db) {
         users: snapshot.users?.length || 0,
         accounts: snapshot.accounts?.length || 0,
         courses: snapshot.courses?.length || 0,
+        terms: snapshot.terms?.length || 0,
         settings: snapshot.settings?.length || 0,
         reminders: snapshot.reminders?.length || 0
       },

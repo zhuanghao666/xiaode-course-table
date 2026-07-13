@@ -134,12 +134,18 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   const beforeAudit = (await request(baseUrl, '/api/health')).data.testAudit.writeDbCallCount;
   const imported = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, {
     method: 'POST',
-    body: { accountId: 'account-a', ...frozenTerm, jwxtData: fixture }
+    body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixture }
   });
   assert.equal(imported.status, 200);
   assert.equal(imported.data.ok, true);
   assert.ok(imported.data.traceId.startsWith('imp_'));
-  assert.deepEqual(imported.data.summary, { received: 3, recognized: 3, accepted: 5, filtered: 0, merged: 0, written: 5, beforeCount: 3, afterCount: 7 });
+  assert.equal(imported.data.totalWeeks, 16);
+  assert.equal(imported.data.totalWeeksSource, 'course-max-week');
+  assert.deepEqual(imported.data.summary, {
+    received: 3, recognized: 3, accepted: 5, filtered: 0, merged: 0, written: 5,
+    beforeCount: 1, afterCount: 5, rawCount: 3, acceptedCount: 3, importedCount: 5,
+    filteredWrongTermCount: 0, filteredUnknownSourceCount: 0
+  });
   assert.equal(imported.data.refreshRequired, true);
   assert.deepEqual(imported.data.requestedTerm, { xnm: '2026', xqm: '12', label: '2026-2027 第二学期', verifiedByResponse: false });
   assert.deepEqual(imported.data.effectiveTerm, { xnm: '2026', xqm: '12', label: '2026-2027 第二学期', verifiedByResponse: true });
@@ -151,7 +157,7 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   assert.ok(disk.courses.some((course) => course.id === 'a-jwxt-other'));
   assert.equal(disk.courses.some((course) => course.id === 'a-jwxt-current'), false);
   assert.deepEqual(disk.courses.filter((course) => course.accountId === 'account-b').map((course) => course.id), ['b-manual']);
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.source === 'jwxt' && course.termKey === '2026:12').length, 5);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.source === 'jwxt' && course.termKey === 'account-a:2026:12').length, 5);
   assert.ok(disk.backups.some((backup) => backup.kind === 'pre-import' && backup.accountId === 'account-a' && backup.traceId === imported.data.traceId));
   assert.equal(disk.importCodes.find((item) => item.code === code.data.code).traceId, imported.data.traceId);
 
@@ -169,8 +175,9 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   assert.equal(files.length, 1);
   const persisted = fs.readFileSync(path.join(diagnosticsDir, files[0]), 'utf8');
   assert.doesNotMatch(persisted, /fixture-token|fixture-pass|Cookie|authorization/i);
+  assert.equal(JSON.parse(persisted).importedCount, 5);
 
-  const reused = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', ...frozenTerm, jwxtData: fixture } });
+  const reused = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixture } });
   assert.equal(reused.status, 409);
   assert.equal(reused.data.reasonCode, 'USED_IMPORT_CODE');
 });
@@ -179,17 +186,17 @@ test('invalid, expired and account-mismatched imports preserve all existing cour
   const { baseUrl, dataFile } = await launch(t);
   const initialIds = JSON.parse(fs.readFileSync(dataFile, 'utf8')).courses.map((course) => course.id).sort();
 
-  const expired = await request(baseUrl, '/api/import-code/EXPIRED1/submit', { method: 'POST', body: { accountId: 'account-a', ...frozenTerm, jwxtData: fixture } });
+  const expired = await request(baseUrl, '/api/import-code/EXPIRED1/submit', { method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixture } });
   assert.equal(expired.status, 410);
   assert.equal(expired.data.reasonCode, 'EXPIRED_IMPORT_CODE');
 
   const mismatchCode = await createCode(baseUrl);
-  const mismatch = await request(baseUrl, `/api/import-code/${mismatchCode.data.code}/submit`, { method: 'POST', body: { accountId: 'account-b', ...frozenTerm, jwxtData: fixture } });
+  const mismatch = await request(baseUrl, `/api/import-code/${mismatchCode.data.code}/submit`, { method: 'POST', body: { accountId: 'account-b', replace: true, ...frozenTerm, jwxtData: fixture } });
   assert.equal(mismatch.status, 403);
   assert.equal(mismatch.data.reasonCode, 'ACCOUNT_MISMATCH');
 
   const invalidCode = await createCode(baseUrl);
-  const invalid = await request(baseUrl, `/api/import-code/${invalidCode.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', ...frozenTerm, jwxtData: { kbList: [] } } });
+  const invalid = await request(baseUrl, `/api/import-code/${invalidCode.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: { kbList: [] } } });
   assert.equal(invalid.status, 422);
   assert.ok(invalid.data.traceId);
   assert.equal(invalid.data.reasonCode, 'UNSUPPORTED_STRUCTURE');
@@ -217,7 +224,7 @@ test('term parameters are explicit and response mismatch never writes db.json', 
 
   const staleContext = await request(baseUrl, `/api/import-code/${second.data.code}/submit`, {
     method: 'POST',
-    body: { accountId: 'account-a', ...firstTerm, jwxtData: fixtureForTerm(frozenTerm) }
+    body: { accountId: 'account-a', replace: true, ...firstTerm, jwxtData: fixtureForTerm(frozenTerm) }
   });
   assert.equal(staleContext.status, 403);
   assert.equal(staleContext.data.reasonCode, 'INVALID_TERM_PARAMS');
@@ -226,7 +233,7 @@ test('term parameters are explicit and response mismatch never writes db.json', 
   const writesBeforeMismatch = (await request(baseUrl, '/api/health')).data.testAudit.writeDbCallCount;
   const mismatch = await request(baseUrl, `/api/import-code/${second.data.code}/submit`, {
     method: 'POST',
-    body: { accountId: 'account-a', ...frozenTerm, jwxtData: fixtureForTerm(firstTerm, '-错误学期') }
+    body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixtureForTerm(firstTerm, '-错误学期') }
   });
   assert.equal(mismatch.status, 422);
   assert.equal(mismatch.data.reasonCode, 'TERM_RESPONSE_MISMATCH');
@@ -238,25 +245,105 @@ test('replace is isolated by both accountId and selected term', async (t) => {
   const { baseUrl, dataFile } = await launch(t);
   const secondCode = await createCode(baseUrl, 'fixture-token-a', true, frozenTerm);
   assert.equal((await request(baseUrl, `/api/import-code/${secondCode.data.code}/submit`, {
-    method: 'POST', body: { accountId: 'account-a', ...frozenTerm, jwxtData: fixtureForTerm(frozenTerm, '-A二') }
+    method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixtureForTerm(frozenTerm, '-A二') }
   })).status, 200);
 
   const firstCodeA = await createCode(baseUrl, 'fixture-token-a', true, firstTerm);
   assert.equal((await request(baseUrl, `/api/import-code/${firstCodeA.data.code}/submit`, {
-    method: 'POST', body: { accountId: 'account-a', ...firstTerm, jwxtData: fixtureForTerm(firstTerm, '-A一') }
+    method: 'POST', body: { accountId: 'account-a', replace: true, ...firstTerm, jwxtData: fixtureForTerm(firstTerm, '-A一') }
   })).status, 200);
 
   const firstCodeB = await createCode(baseUrl, 'fixture-token-b', true, firstTerm);
   assert.equal((await request(baseUrl, `/api/import-code/${firstCodeB.data.code}/submit`, {
-    method: 'POST', body: { accountId: 'account-b', ...firstTerm, jwxtData: fixtureForTerm(firstTerm, '-B一') }
+    method: 'POST', body: { accountId: 'account-b', replace: true, ...firstTerm, jwxtData: fixtureForTerm(firstTerm, '-B一') }
   })).status, 200);
 
   const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === '2026:12' && course.source === 'jwxt').length, 5);
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === '2025:3' && course.source === 'jwxt').length, 5);
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-b' && course.termKey === '2025:3' && course.source === 'jwxt').length, 5);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === 'account-a:2026:12' && course.source === 'jwxt').length, 5);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === 'account-a:2025:3' && course.source === 'jwxt').length, 5);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-b' && course.termKey === 'account-b:2025:3' && course.source === 'jwxt').length, 5);
   assert.ok(disk.courses.some((course) => course.id === 'a-manual'));
   assert.ok(disk.courses.some((course) => course.id === 'b-manual'));
+});
+
+test('activeTerm isolates display, strict sources and dynamic week limits per term', async (t) => {
+  const { baseUrl, dataFile } = await launch(t);
+  const firstPayload = fixtureForTerm(firstTerm, '-第一学期');
+  firstPayload.totalWeeks = 20;
+  firstPayload.kbList.push({
+    kcmc: '不应混入的第二学期课程', xnm: frozenTerm.xnm, xqm: frozenTerm.xqm,
+    xqj: 1, jcor: '1节', zcd: '1-17周'
+  });
+  firstPayload.historyRows = [{
+    kcmc: '未知数组历史课程', xnm: '2024', xqm: '12', xqj: 2, jcor: '2节', zcd: '1-18周'
+  }];
+
+  const firstCode = await createCode(baseUrl, 'fixture-token-a', true, firstTerm);
+  const firstImport = await request(baseUrl, `/api/import-code/${firstCode.data.code}/submit`, {
+    method: 'POST',
+    body: { accountId: 'account-a', replace: true, ...firstTerm, jwxtData: firstPayload }
+  });
+  assert.equal(firstImport.status, 200);
+  assert.equal(firstImport.data.summary.filteredWrongTermCount, 1);
+  assert.equal(firstImport.data.summary.filteredUnknownSourceCount, 1);
+  assert.equal(firstImport.data.summary.rawCount, 5);
+  assert.equal(firstImport.data.totalWeeks, 20);
+  assert.equal(firstImport.data.totalWeeksSource, 'jwxt-response');
+  assert.equal(firstImport.data.activeTerm.termKey, 'account-a:2025:3');
+  assert.equal(firstImport.data.activeTerm.courseCount, 5);
+
+  const secondPayload = fixtureForTerm(frozenTerm, '-第二学期');
+  secondPayload.totalWeeks = 17;
+  const secondCode = await createCode(baseUrl, 'fixture-token-a', true, frozenTerm);
+  const secondImport = await request(baseUrl, `/api/import-code/${secondCode.data.code}/submit`, {
+    method: 'POST',
+    body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: secondPayload }
+  });
+  assert.equal(secondImport.status, 200);
+  assert.equal(secondImport.data.totalWeeks, 17);
+
+  const activeSecond = await request(baseUrl, '/api/auth/me', { token: 'fixture-token-a' });
+  assert.equal(activeSecond.data.activeTerm.termKey, 'account-a:2026:12');
+  assert.equal(activeSecond.data.totalWeeks, 17);
+  assert.ok(activeSecond.data.courses.every((course) => course.termKey === 'account-a:2026:12' && course.name.endsWith('-第二学期')));
+  assert.equal(activeSecond.data.courses.some((course) => course.name.includes('第一学期')), false);
+
+  const switchedFirst = await request(baseUrl, '/api/my/active-term', {
+    token: 'fixture-token-a', method: 'PUT', body: { termKey: 'account-a:2025:3' }
+  });
+  assert.equal(switchedFirst.status, 200);
+  assert.equal(switchedFirst.data.activeTerm.totalWeeks, 20);
+  const activeFirst = await request(baseUrl, '/api/auth/me', { token: 'fixture-token-a' });
+  assert.ok(activeFirst.data.courses.every((course) => course.termKey === 'account-a:2025:3' && course.name.endsWith('-第一学期')));
+  assert.equal(activeFirst.data.courses.some((course) => course.name.includes('第二学期')), false);
+
+  const manualWeeks = await request(baseUrl, '/api/my/active-term/settings', {
+    token: 'fixture-token-a', method: 'PUT', body: { totalWeeks: 20, termStart: '2025-09-01' }
+  });
+  assert.equal(manualWeeks.status, 200);
+  assert.equal(manualWeeks.data.activeTerm.totalWeeksSource, 'manual');
+  assert.equal(manualWeeks.data.activeTerm.termStart, '2025-09-01');
+
+  const diskBeforeReplace = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  const secondIds = diskBeforeReplace.courses
+    .filter((course) => course.termKey === 'account-a:2026:12')
+    .map((course) => course.id).sort();
+  const replaceFirstCode = await createCode(baseUrl, 'fixture-token-a', true, firstTerm);
+  const replacement = fixtureForTerm(firstTerm, '-第一学期新版');
+  replacement.totalWeeks = 20;
+  assert.equal((await request(baseUrl, `/api/import-code/${replaceFirstCode.data.code}/submit`, {
+    method: 'POST', body: { accountId: 'account-a', replace: true, ...firstTerm, jwxtData: replacement }
+  })).status, 200);
+  const diskAfterReplace = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  assert.deepEqual(diskAfterReplace.courses.filter((course) => course.termKey === 'account-a:2026:12').map((course) => course.id).sort(), secondIds);
+  assert.ok(diskAfterReplace.courses.filter((course) => course.termKey === 'account-a:2025:3').every((course) => course.name.endsWith('新版')));
+
+  const modeCode = await createCode(baseUrl, 'fixture-token-a', true, firstTerm);
+  const mismatchedMode = await request(baseUrl, `/api/import-code/${modeCode.data.code}/submit`, {
+    method: 'POST', body: { accountId: 'account-a', replace: false, ...firstTerm, jwxtData: replacement }
+  });
+  assert.equal(mismatchedMode.status, 403);
+  assert.equal(mismatchedMode.data.reasonCode, 'INVALID_TERM_PARAMS');
 });
 
 test('MySQL failure does not block traced JSON import', async (t) => {
@@ -268,7 +355,7 @@ test('MySQL failure does not block traced JSON import', async (t) => {
     MYSQL_RETRY_COOLDOWN_MS: '1000'
   });
   const code = await createCode(baseUrl);
-  const imported = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', ...frozenTerm, jwxtData: fixture } });
+  const imported = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixture } });
   assert.equal(imported.status, 200);
   assert.equal(imported.data.summary.written, 5);
   await new Promise((resolve) => setTimeout(resolve, 350));
