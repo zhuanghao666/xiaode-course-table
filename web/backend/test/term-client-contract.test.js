@@ -10,6 +10,27 @@ const frontendFixed = fs.readFileSync(path.join(repoRoot, 'web', 'frontend', 'pu
 const activity = fs.readFileSync(path.join(repoRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'xiaode', 'importhelper', 'MainActivity.kt'), 'utf8');
 const widget = fs.readFileSync(path.join(repoRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'xiaode', 'importhelper', 'WidgetUpdater.kt'), 'utf8');
 const termScope = fs.readFileSync(path.join(repoRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'xiaode', 'importhelper', 'TermScope.kt'), 'utf8');
+const termCalendar = fs.readFileSync(path.join(repoRoot, 'web', 'frontend', 'public', 'term-calendar.js'), 'utf8');
+const serverSource = fs.readFileSync(path.join(repoRoot, 'web', 'backend', 'src', 'server.js'), 'utf8');
+
+test('unknown termStart remains a preview-only state in Web and Widget', () => {
+  assert.match(frontend, /XiaoDeTermCalendar/);
+  assert.match(frontend, /calendar\.status==='unknown'/);
+  assert.match(frontend, /开学日期待确认/);
+  assert.match(frontend, /calendar\.todayInDisplayedWeek/);
+  assert.match(frontend, /currentWeek:\s*calendar\.actualWeek/);
+  assert.doesNotMatch(frontend, /if\s*\(!meta\.termStart\)\s*return\s*1/);
+  assert.match(termCalendar, /status:\s*'unknown'/);
+  assert.match(termCalendar, /actualWeek:\s*null/);
+  assert.match(widget, /TermCalendarStatus\.UNKNOWN/);
+  assert.match(widget, /开学日期待确认/);
+  assert.doesNotMatch(widget, /max\(1,\s*min\(totalWeeks/);
+  assert.match(serverSource, /termStart:\s*nextTerm\?\.termStart\s*\|\|\s*''/);
+  assert.doesNotMatch(serverSource, /termStart:\s*analysis\.explicitTermStart/);
+  assert.match(serverSource, /termStart 必须是第一教学周的周一/);
+  assert.match(serverSource, /termStartStatus:\s*'unknown'/);
+  assert.match(serverSource, /termStartStatus:\s*actualWeek > totalWeeks \? 'after-term' : 'active'/);
+});
 
 test('web reads active term limits and never navigates by global meta totalWeeks', () => {
   assert.match(frontend, /function getActiveTerm\(\)/);

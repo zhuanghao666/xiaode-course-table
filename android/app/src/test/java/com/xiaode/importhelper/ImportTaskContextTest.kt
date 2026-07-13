@@ -3,8 +3,11 @@ package com.xiaode.importhelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
+import java.util.GregorianCalendar
 
 class ImportTaskContextTest {
+    private fun localDate(year: Int, month: Int, day: Int) = GregorianCalendar(year, month - 1, day)
+
     @Test
     fun frozenContextDoesNotFollowLaterActiveAccountChanges() {
         var activeAccountId = "account-a"
@@ -105,5 +108,47 @@ class ImportTaskContextTest {
         assertEquals(2, result.size)
         assertEquals(base, result[0])
         assertEquals(differentWeeks, result[1])
+    }
+
+    @Test
+    fun unknownTermStartNeverCreatesActualWeekOrTodayCourse() {
+        val unknown = getTermCalendarState("", 20, localDate(2026, 9, 7))
+        assertEquals(TermCalendarStatus.UNKNOWN, unknown.status)
+        assertEquals(null, unknown.actualWeek)
+        assertEquals(1, unknown.displayedWeek)
+        assertEquals(false, unknown.todayInDisplayedWeek)
+
+        val nonMonday = getTermCalendarState("2026-09-01", 20, localDate(2026, 9, 7))
+        assertEquals(TermCalendarStatus.UNKNOWN, nonMonday.status)
+        assertEquals(null, nonMonday.actualWeek)
+    }
+
+    @Test
+    fun knownTermStartDistinguishesBeforeActiveAndAfter() {
+        val before = getTermCalendarState("2026-09-07", 20, localDate(2026, 9, 1))
+        assertEquals(TermCalendarStatus.BEFORE_TERM, before.status)
+        assertEquals(0, before.actualWeek)
+        assertEquals(false, before.todayInDisplayedWeek)
+        assertEquals(6, before.daysUntilStart)
+
+        val firstDay = getTermCalendarState("2026-09-07", 20, localDate(2026, 9, 7))
+        assertEquals(TermCalendarStatus.ACTIVE, firstDay.status)
+        assertEquals(1, firstDay.actualWeek)
+        assertEquals(true, firstDay.todayInDisplayedWeek)
+        assertEquals(1, getTermCalendarState("2026-09-07", 20, localDate(2026, 9, 13)).actualWeek)
+        assertEquals(2, getTermCalendarState("2026-09-07", 20, localDate(2026, 9, 14)).actualWeek)
+
+        val after = getTermCalendarState("2026-09-07", 20, localDate(2027, 2, 1))
+        assertEquals(TermCalendarStatus.AFTER_TERM, after.status)
+        assertEquals(20, after.displayedWeek)
+        assertEquals(false, after.todayInDisplayedWeek)
+    }
+
+    @Test
+    fun previewWeekDoesNotBecomeTodayWhenActualWeekDiffers() {
+        val preview = getTermCalendarState("2026-09-07", 20, localDate(2026, 9, 23), 1)
+        assertEquals(3, preview.actualWeek)
+        assertEquals(1, preview.displayedWeek)
+        assertEquals(false, preview.todayInDisplayedWeek)
     }
 }

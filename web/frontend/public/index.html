@@ -642,8 +642,10 @@
   </div>
   <div class="toast" id="toast"></div>
 
+  <script src="/term-calendar.js"></script>
   <script>
     const DAYS=["周一","周二","周三","周四","周五","周六","周日"];
+    const TERM_CALENDAR=window.XiaoDeTermCalendar;
     const APP_NAME="小德课表";
     const HEALING_QUOTES=[
       "慢慢来，比较快。今天完成一点点，也是在向前走。",
@@ -777,7 +779,10 @@
     function getActiveTermStart(){ return getActiveTerm()?.termStart||''; }
     function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:getActiveTermTotalWeeks(),termStart:getActiveTermStart(),weekStartDay:Number(settings.weekStartDay||1)}; }
     function totalWeeks(){ return getActiveTermTotalWeeks(); }
-    function clampPreviewWeek(){ if(state.previewWeek!==null) state.previewWeek=Math.max(1,Math.min(totalWeeks(),Number(state.previewWeek)||1)); }
+    function getTermCalendarStateForUi(now=new Date(),displayedWeek=state.previewWeek){
+      return TERM_CALENDAR.getTermCalendarState({today:now,termStart:getActiveTermStart(),totalWeeks:totalWeeks(),displayedWeek});
+    }
+    function clampPreviewWeek(){ if(state.previewWeek!==null) state.previewWeek=getTermCalendarStateForUi(new Date(),state.previewWeek).displayedWeek; }
     function saveCourseSettings(next,options={}){ if(options.markCustomized!==false) markLayoutCustomized(); state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
     function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
     const DEFAULT_12_SLOTS=[
@@ -805,19 +810,12 @@
     }
     function visibleSlots(){ return normalizeClientSlots(state.slots).filter(s=>!(state.hideFifthSlot && Number(s.slot)===5)); }
     function weekDateObject(day, week=getSelectedWeek()){
-      const meta=effectiveMeta();
-      const start=new Date(`${meta.termStart||''}T00:00:00`);
-      if(Number.isNaN(start.getTime())) return null;
-      const weekStart=Number(meta.weekStartDay||1);
-      const offset=(Number(day)-weekStart+7)%7;
-      const d=new Date(start);
-      d.setDate(start.getDate()+(Number(week)-1)*7+offset);
-      return d;
+      return TERM_CALENDAR.dateForDisplayedDay(getTermCalendarStateForUi(new Date(),week),Number(day));
     }
     function selectedWeekDate(day){
       const d=weekDateObject(day);
       if(!d) return '';
-      return `${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      return TERM_CALENDAR.formatMonthDay(d);
     }
     function setHideFifthSlot(hidden){
       markLayoutCustomized();
@@ -834,8 +832,8 @@
       schedulePreferenceSave();
     }
     function timeToMin(t){const [h,m]=String(t||'00:00').split(':').map(Number); return h*60+m}
-    function getWeek(now=new Date()){const meta=effectiveMeta(); if(!meta.termStart) return 1; const start=new Date(`${meta.termStart}T00:00:00`); if(Number.isNaN(start.getTime())) return 1; const diff=Math.floor((now-start)/86400000); return Math.max(1,Math.min(totalWeeks(),Math.floor(diff/7)+1));}
-    function getSelectedWeek(){return Math.max(1,Math.min(totalWeeks(),state.previewWeek||getWeek()))}
+    function getWeek(now=new Date()){return getTermCalendarStateForUi(now).actualWeek;}
+    function getSelectedWeek(){return getTermCalendarStateForUi().displayedWeek;}
     function getDayIndex(now=new Date()){const d=now.getDay(); return d===0?7:d}
     function getSlot(num){return state.slots.find(s=>Number(s.slot)===Number(num))||{label:'',range:'',start:'00:00',end:'00:00'}}
     function normalizeCourseText(value){ return String(value??'').replace(/\s+/g,' ').trim(); }
@@ -848,9 +846,9 @@
     function courseCoversSlot(c,slot){ const value=Number(slot); return Number.isInteger(value)&&value>=courseStartSlot(c)&&value<=courseEndSlot(c); }
     function activeInWeek(c,w){return effectiveCourseWeeks(c).includes(Number(w))}
     function coursesForWeek(w){return state.courses.filter(c=>activeInWeek(c,w)).sort((a,b)=>(a.day-b.day)||(courseStartSlot(a)-courseStartSlot(b)))}
-    function nowCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&m>=timeToMin(getSlot(courseStartSlot(c)).start)&&m<=timeToMin(getSlot(courseEndSlot(c)).end))||null}
-    function nextCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)>d||(Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m))||null}
-    function soonCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m&&timeToMin(getSlot(courseStartSlot(c)).start)-m<=10)||null}
+    function nowCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&m>=timeToMin(getSlot(courseStartSlot(c)).start)&&m<=timeToMin(getSlot(courseEndSlot(c)).end))||null}
+    function nextCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)>d||(Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m))||null}
+    function soonCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m&&timeToMin(getSlot(courseStartSlot(c)).start)-m<=10)||null}
     function courseMergeKey(c){ return [c.accountId||'',c.termKey||'',Number(c.day||c.weekday||0),firstCourseText(c.name,c.courseName),courseWeeksFingerprint(c),firstCourseText(c.location,c.room),c.teacher||''].map(normalizeCourseText).join('|'); }
     function courseExactKey(c){ return `${courseMergeKey(c)}|${courseStartSlot(c)}-${courseEndSlot(c)}`; }
     // LOGICAL_COURSE_RANGE_HELPERS_START
@@ -1175,14 +1173,48 @@
       const select=$('#activeTermSelect');
       if(select) select.onchange=()=>switchActiveTerm(select.value);
     }
-    function renderHeader(){ const now=new Date(); $('#appTitle').textContent=APP_NAME; document.title=APP_NAME; $('#dateLine').textContent=''; $('#noticeLine').textContent=''; $('#ownerName').textContent=state.user?`${state.user.name} 的`:'我的'; renderTermSwitcher(); if(!state.user){$('#statusPill').textContent='请先登录'; $('#nextName').textContent='每个同学都有自己的课表'; $('#nextMeta').textContent='登录后只看自己的数据，互不影响'; return;} const current=nowCourse(now), soon=soonCourse(now), next=nextCourse(now); if(current){$('#statusPill').textContent=`${state.user.name} 正在上课`; $('#nextName').textContent=current.name; $('#nextMeta').textContent=`${DAYS[current.day-1]} · ${getSlot(current.slot).label} · ${current.location}`;} else if(soon){$('#statusPill').textContent='即将上课'; $('#nextName').textContent=soon.name; $('#nextMeta').textContent=`${DAYS[soon.day-1]} · ${getSlot(soon.slot).range} · ${soon.location}`;} else if(next){$('#statusPill').textContent='课间休息'; $('#nextName').textContent=next.name; $('#nextMeta').textContent=`${DAYS[next.day-1]} · ${getSlot(next.slot).label} · ${next.location}`;} else {$('#statusPill').textContent='今日结束'; $('#nextName').textContent='今天没有下一节课'; $('#nextMeta').textContent='可以休息一下';} const w=getSelectedWeek(); const isCurrentWeek=w===getWeek(now); $('#weekTitle').textContent=`第 ${w} 周 · ${getActiveTerm()?.selectedTermLabel||'当前学期'}`; $('#weekBadge').textContent=`共${totalWeeks()}周`; $('#weekBadge').classList.toggle('week-current', isCurrentWeek); $('#parityBadge').textContent=w%2===0?'双周':'单周'; }
+    function termWeekTitle(calendar){
+      const label=getActiveTerm()?.selectedTermLabel||'当前学期';
+      if(calendar.status==='unknown') return `预览第 ${calendar.displayedWeek} 周 · ${label}`;
+      if(calendar.status==='before-term') return `未开学 · 预览第 ${calendar.displayedWeek} 周 · ${label}`;
+      if(calendar.status==='after-term') return `已结课 · 查看第 ${calendar.displayedWeek} 周 · ${label}`;
+      return `第 ${calendar.displayedWeek} 周 · ${label}`;
+    }
+    function termWeekHead(calendar){
+      if(calendar.status==='unknown') return `预览${calendar.displayedWeek}周`;
+      if(calendar.status==='before-term') return `未开学·${calendar.displayedWeek}周`;
+      if(calendar.status==='after-term') return `已结课·${calendar.displayedWeek}周`;
+      return `第${calendar.displayedWeek}周`;
+    }
+    function renderHeader(){
+      const now=new Date(),calendar=getTermCalendarStateForUi(now);
+      $('#appTitle').textContent=APP_NAME; document.title=APP_NAME;
+      $('#dateLine').textContent=calendar.displayedWeekStart?`${TERM_CALENDAR.formatMonthDay(calendar.displayedWeekStart)}-${TERM_CALENDAR.formatMonthDay(calendar.displayedWeekEnd)}`:'';
+      $('#noticeLine').textContent=calendar.status==='unknown'?'开学日期待确认':'';
+      $('#ownerName').textContent=state.user?`${state.user.name} 的`:'我的'; renderTermSwitcher();
+      if(!state.user){$('#statusPill').textContent='请先登录'; $('#nextName').textContent='每个同学都有自己的课表'; $('#nextMeta').textContent='登录后只看自己的数据，互不影响'; return;}
+      if(calendar.status==='unknown'){
+        $('#statusPill').textContent='开学日期待确认'; $('#nextName').textContent=`预览第 ${calendar.displayedWeek} 周课程`; $('#nextMeta').textContent='课程可正常查看；学校公布后请设置第一教学周周一';
+      }else if(calendar.status==='before-term'){
+        $('#statusPill').textContent='学期尚未开始'; $('#nextName').textContent=`预览第 ${calendar.displayedWeek} 周课程`; $('#nextMeta').textContent=`第一教学周周一：${getActiveTermStart()}`;
+      }else if(calendar.status==='after-term'){
+        $('#statusPill').textContent='本学期已结束'; $('#nextName').textContent=`查看第 ${calendar.displayedWeek} 周课程`; $('#nextMeta').textContent=`本学期共 ${calendar.totalWeeks} 周`;
+      }else{
+        const current=nowCourse(now), soon=soonCourse(now), next=nextCourse(now);
+        if(current){$('#statusPill').textContent=`${state.user.name} 正在上课`; $('#nextName').textContent=current.name; $('#nextMeta').textContent=`${DAYS[current.day-1]} · ${getSlot(current.slot).label} · ${current.location}`;}
+        else if(soon){$('#statusPill').textContent='即将上课'; $('#nextName').textContent=soon.name; $('#nextMeta').textContent=`${DAYS[soon.day-1]} · ${getSlot(soon.slot).range} · ${soon.location}`;}
+        else if(next){$('#statusPill').textContent='课间休息'; $('#nextName').textContent=next.name; $('#nextMeta').textContent=`${DAYS[next.day-1]} · ${getSlot(next.slot).label} · ${next.location}`;}
+        else{$('#statusPill').textContent='今日结束'; $('#nextName').textContent='今天没有下一节课'; $('#nextMeta').textContent='可以休息一下';}
+      }
+      $('#weekTitle').textContent=termWeekTitle(calendar); $('#weekBadge').textContent=`共${totalWeeks()}周`; $('#weekBadge').classList.toggle('week-current', calendar.todayInDisplayedWeek); $('#parityBadge').textContent=calendar.displayedWeek%2===0?'双周':'单周';
+    }
     function renderWeeks(){ $('#weekStrip').innerHTML=''; }
     function renderTable(){
-      const now=new Date(), actualWeek=getWeek(now), week=getSelectedWeek(), today=getDayIndex(now);
+      const now=new Date(), calendar=getTermCalendarStateForUi(now), actualWeek=calendar.actualWeek, week=calendar.displayedWeek, today=calendar.todayDayIndex;
       const current=nowCourse(now), soon=soonCourse(now), slots=visibleSlots();
-      const weekHead=`第${week}周`;
+      const weekHead=termWeekHead(calendar);
       let html=`<div class="head week-head" style="grid-column:1;grid-row:1">${weekHead}</div>${DAYS.map((d,i)=>{
-        const isToday=week===actualWeek&&i+1===today;
+        const isToday=calendar.todayInDisplayedWeek&&i+1===today;
         const sub=isToday?'今天':selectedWeekDate(i+1);
         return `<div class="head ${isToday?'today':''}" style="grid-column:${i+2};grid-row:1"><div class="day-main">${d}</div><div class="day-sub">${sub}</div></div>`;
       }).join('')}`;
@@ -1191,7 +1223,7 @@
         html+=`<div class="timecell" style="grid-column:1;grid-row:${row}"><div class="name" style="font-size:19px;color:var(--text)">${slot.slot}</div><div class="muted">${slot.range}</div></div>`;
       });
       for(let day=1; day<=7; day++){
-        const todayCls=(week===actualWeek&&day===today)?'today':'';
+        const todayCls=(calendar.todayInDisplayedWeek&&day===today)?'today':'';
         const occupiedIndexes=new Set();
         overlapComponentsForDay(day,week,slots).forEach(component=>{
           const placement=visibleRangePlacement(component,slots);
@@ -1222,7 +1254,7 @@
       const slots=visibleSlots();
       return logicalItemsForDay(day,week,slots);
     }
-    function renderMobile(){ const week=getSelectedWeek(), actualWeek=getWeek(), today=getDayIndex(); $('#mobileList').innerHTML=DAYS.map((d,idx)=>{ const items=mergedDayItems(idx+1,week); return `<section class="card mday"><div class="mday-title">${d}${week===actualWeek&&today===idx+1?' · 今天':''}</div>${items.length?items.map(g=>{ const c=g.course; return `<div style="margin-top:10px">${buildCourse(c,'',{count:g.count,span:g.span,startSlot:g.startSlot,endSlot:g.endSlot})}</div>` }).join(''):'<div class="muted">无课程</div>'}</section>` }).join(''); bindCourseClicks(); }
+    function renderMobile(){ const calendar=getTermCalendarStateForUi(),week=calendar.displayedWeek,today=calendar.todayDayIndex; $('#mobileList').innerHTML=DAYS.map((d,idx)=>{ const items=mergedDayItems(idx+1,week),date=selectedWeekDate(idx+1); return `<section class="card mday"><div class="mday-title">${d}${date?` · ${date}`:''}${calendar.todayInDisplayedWeek&&today===idx+1?' · 今天':''}</div>${items.length?items.map(g=>{ const c=g.course; return `<div style="margin-top:10px">${buildCourse(c,'',{count:g.count,span:g.span,startSlot:g.startSlot,endSlot:g.endSlot})}</div>` }).join(''):'<div class="muted">无课程</div>'}</section>` }).join(''); bindCourseClicks(); }
     function renderSlots(){
       const table=$('#slotsTable');
       if(!table) return;
@@ -1434,14 +1466,28 @@
         openModal('反馈列表', html);
       }catch(e){toast(e.message)}
     }
+    function focusCurrentTermWeek(){
+      const calendar=getTermCalendarStateForUi();
+      if(calendar.status==='unknown') return toast('开学日期尚未确认，当前只能按周预览课程');
+      if(calendar.status==='before-term'){
+        state.previewWeek=1; renderAll(); return toast('该学期尚未开始，已显示第1周预览');
+      }
+      if(calendar.status==='after-term'){
+        state.previewWeek=totalWeeks(); renderAll(); return toast('该学期已结束，已显示最后一周');
+      }
+      state.previewWeek=calendar.actualWeek; renderAll(); toast('已回到本周');
+    }
     function showTodayCourses(){
   if(!state.user){
     toast('请先登录');
     return;
   }
 
-  const today = getDayIndex();
-  const currentWeek = getWeek();
+  const calendar=getTermCalendarStateForUi();
+  if(calendar.status==='unknown') return toast('开学日期尚未确认，暂时无法定位今天的课程');
+  if(calendar.status!=='active') return focusCurrentTermWeek();
+  const today = calendar.todayDayIndex;
+  const currentWeek = calendar.actualWeek;
   state.previewWeek = currentWeek;
 
   const list = coursesForWeek(currentWeek).filter(c => c.day === today);
@@ -2112,9 +2158,9 @@
         <div class="form-grid">
           <div class="row"><label>一共多少周</label><input id="settingTotalWeeks" type="number" min="1" max="60" value="${escapeHtml(getActiveTermTotalWeeks())}" /></div>
           <div class="row"><label>每周开始日</label><select id="settingWeekStartDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${Number(st.weekStartDay||1)===i+1?'selected':''}>${d}</option>`).join('')}</select></div>
-          <div class="row"><label>开学日期</label><input id="settingTermStart" type="date" value="${escapeHtml(getActiveTermStart())}" /></div>
+          <div class="row"><label>设置第一教学周周一</label><input id="settingTermStart" type="date" value="${escapeHtml(getActiveTermStart())}" /></div>
         </div>
-        <div class="secondary-note">总周数和开学日期只保存到当前学期；切换学期后会立即使用该学期自己的范围。</div>
+        <div class="secondary-note">日期尚未公布时可以留空，不影响课程导入和第1周预览；公布后保存周一日期，会立即启用真实周次、星期日期和今天高亮。</div>
         <div class="style-switch-grid" style="margin-top:14px">
           <div class="style-row"><div>是否需要教室模块<small>关闭后课程格子和编辑界面不突出教室。</small></div><button class="btn ghost" id="settingShowLocation">${st.showLocation?'开启':'关闭'}</button></div>
           <div class="style-row"><div>是否需要教师模块<small>关闭后完整模式里不显示老师。</small></div><button class="btn ghost" id="settingShowTeacher">${st.showTeacher?'开启':'关闭'}</button></div>
@@ -2131,6 +2177,7 @@
         try{
           const totalWeeksValue=Number($('#settingTotalWeeks')?.value||0);
           const termStartValue=($('#settingTermStart')?.value||'').trim();
+          if(termStartValue&&!TERM_CALENDAR.validTermStart(termStartValue)) throw new Error('请选择第一教学周的周一；日期未知时可以留空');
           const result=await api('/api/my/active-term/settings',{method:'PUT',body:JSON.stringify({totalWeeks:totalWeeksValue,termStart:termStartValue})});
           state.activeTerm=result.activeTerm||state.activeTerm;
           state.availableTerms=(state.availableTerms||[]).map(term=>term.termKey===state.activeTerm?.termKey?state.activeTerm:term);
@@ -2422,7 +2469,7 @@ $('#toggleManageBtn').onclick = () => {
   $('#drawer').classList.toggle('hidden');
 };
 $('#todayCoursesBtn').onclick = showTodayCourses;
-$('#thisWeekBtn').onclick = () => { state.previewWeek = null; renderAll(); toast('已回到本周'); };
+$('#thisWeekBtn').onclick = focusCurrentTermWeek;
 $('#feedbackBtn').onclick = openFeedbackModal;
 $('#viewFeedbackBtn').onclick = openFeedbackList;
 $('#viewUsersBtn').onclick = openAdminUsers;
@@ -2431,7 +2478,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
     $('#prevWeek').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); };
     $('#nextWeek').onclick=()=>{ state.previewWeek=Math.min(totalWeeks(),getSelectedWeek()+1); renderAll(); };
     $('#prevWeekInline') && ($('#prevWeekInline').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); });
-    $('#thisWeekInline') && ($('#thisWeekInline').onclick=()=>{ state.previewWeek=null; renderAll(); toast('已回到本周'); });
+    $('#thisWeekInline') && ($('#thisWeekInline').onclick=focusCurrentTermWeek);
     $('#nextWeekInline') && ($('#nextWeekInline').onclick=()=>{ state.previewWeek=Math.min(totalWeeks(),getSelectedWeek()+1); renderAll(); });
     $$('.mode .btn').forEach(b=>b.onclick=()=>setInfoMode(b.dataset.mode));
     $('#saveCourseBtn').onclick=async()=>{ try{ const payload={name:$('#courseName').value.trim(),shortName:$('#courseShortName').value.trim(),teacher:$('#courseTeacher').value.trim(),location:$('#courseLocation').value.trim(),classGroup:$('#courseClassGroup').value.trim(),day:Number($('#courseDay').value),slot:Number($('#courseSlot').value),weekText:$('#courseWeekText').value.trim(),oddEven:$('#courseOddEven').value,category:$('#courseCategory').value}; if(state.editingCourse){ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'PUT',body:JSON.stringify(payload)}); } else { await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)}); } await loadMe(); clearCourseForm(); toast('课程已保存到你的课表'); }catch(e){ toast(e.message); } };
@@ -2645,6 +2692,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
     }
     function buildWidgetPayload(){
       const now = new Date();
+      const calendar = getTermCalendarStateForUi(now);
       const current = state.user ? nowCourse(now) : null;
       const next = state.user ? nextCourse(now) : null;
       return {
@@ -2658,8 +2706,9 @@ $('#helpBtnAuth').onclick = openHelpModal;
         meta: state.meta ? {
           campusName: state.meta.campusName || '',
           termStart: getActiveTermStart(),
+          termStartStatus: calendar.status,
           totalWeeks: getActiveTermTotalWeeks(),
-          currentWeek: getWeek(now)
+          currentWeek: calendar.actualWeek
         } : {},
         slots: (state.slots || []).map(s => ({
           slot: Number(s.slot),

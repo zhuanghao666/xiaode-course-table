@@ -13,9 +13,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import kotlin.math.floor
-import kotlin.math.max
-import kotlin.math.min
 
 object WidgetUpdater {
     private val DAYS = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -131,10 +128,38 @@ object WidgetUpdater {
             val slots = parseSlots(json.optJSONArray("slots") ?: JSONArray())
             val courses = parseCourses(json.optJSONArray("courses") ?: JSONArray(), activeTermKey)
             val now = Calendar.getInstance()
-            val week = getWeek(termStart, totalWeeks, now)
-            val display = findDisplayCourse(courses, slots, week, now)
+            val calendarState = getTermCalendarState(termStart, totalWeeks, now)
 
             views.setTextViewText(R.id.widgetTitle, "小德课表 · $scheduleName")
+            if (calendarState.status != TermCalendarStatus.ACTIVE) {
+                when (calendarState.status) {
+                    TermCalendarStatus.UNKNOWN -> {
+                        views.setTextViewText(R.id.widgetChip, "待确认")
+                        views.setTextViewText(R.id.widgetCourseName, "开学日期待确认")
+                        views.setTextViewText(R.id.widgetMeta1, "课程已同步，可在 App 中预览第1周")
+                        views.setTextViewText(R.id.widgetMeta2, "学校公布后请设置第一教学周周一")
+                    }
+                    TermCalendarStatus.BEFORE_TERM -> {
+                        views.setTextViewText(R.id.widgetChip, "未开学")
+                        views.setTextViewText(R.id.widgetCourseName, "该学期尚未开始")
+                        views.setTextViewText(R.id.widgetMeta1, "第一教学周周一 $termStart")
+                        views.setTextViewText(R.id.widgetMeta2, "距离开学还有 ${calendarState.daysUntilStart ?: 0} 天")
+                    }
+                    TermCalendarStatus.AFTER_TERM -> {
+                        views.setTextViewText(R.id.widgetChip, "已结课")
+                        views.setTextViewText(R.id.widgetCourseName, "本学期已经结束")
+                        views.setTextViewText(R.id.widgetMeta1, "本学期共 $totalWeeks 周")
+                        views.setTextViewText(R.id.widgetMeta2, "打开 App 可查看历史课表")
+                    }
+                    TermCalendarStatus.ACTIVE -> Unit
+                }
+                val syncText = if (updatedAt > 0) "同步 ${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(updatedAt))}" else "等待同步"
+                views.setTextViewText(R.id.widgetSub, syncText)
+                return views
+            }
+            val week = calendarState.actualWeek ?: return views
+            val display = findDisplayCourse(courses, slots, week, now)
+
             views.setTextViewText(R.id.widgetChip, display.status)
             val course = display.course
             val slot = display.slot
@@ -210,18 +235,6 @@ object WidgetUpdater {
             )
         }
         return deduplicateCourses(list)
-    }
-
-    private fun getWeek(termStart: String, totalWeeks: Int, now: Calendar): Int {
-        return try {
-            val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
-            fmt.isLenient = false
-            val start = fmt.parse(termStart) ?: return 1
-            val diffDays = floor((now.timeInMillis - start.time) / 86_400_000.0).toInt()
-            max(1, min(totalWeeks, diffDays / 7 + 1))
-        } catch (_: Exception) {
-            1
-        }
     }
 
     private fun getDayIndex(calendar: Calendar): Int {

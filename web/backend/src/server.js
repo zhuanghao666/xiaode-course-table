@@ -234,7 +234,33 @@ function normalizeTotalWeeks(value, fallback = DEFAULT_TOTAL_WEEKS) {
 
 function normalizeDateText(value = '') {
   const text = String(value || '').trim();
-  return /^20\d{2}-\d{2}-\d{2}$/.test(text) ? text : '';
+  const match = text.match(/^(20\d{2})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? text : '';
+}
+
+function isMondayTermStart(value = '') {
+  const text = normalizeDateText(value);
+  if (!text) return false;
+  const [year, month, day] = text.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay() === 1;
+}
+
+function termCalendarSnapshot(term, now = new Date()) {
+  const termStart = normalizeDateText(term?.termStart);
+  const totalWeeks = normalizeTotalWeeks(term?.totalWeeks);
+  if (!termStart || !isMondayTermStart(termStart)) return { termStartStatus: 'unknown', actualWeek: null };
+  const [year, month, day] = termStart.split('-').map(Number);
+  const startOrdinal = Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+  const todayOrdinal = Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86_400_000);
+  const diffDays = todayOrdinal - startOrdinal;
+  if (diffDays < 0) return { termStartStatus: 'before-term', actualWeek: 0 };
+  const actualWeek = Math.floor(diffDays / 7) + 1;
+  return { termStartStatus: actualWeek > totalWeeks ? 'after-term' : 'active', actualWeek };
 }
 
 function normalizeLegacyCourseTerm(course, accountId) {
@@ -566,6 +592,7 @@ function retainedLogicalCourse(db, target) {
 
 function publicTerm(db, term) {
   if (!term) return null;
+  const calendar = termCalendarSnapshot(term);
   return {
     termKey: term.termKey,
     xnm: term.xnm || '',
@@ -573,6 +600,8 @@ function publicTerm(db, term) {
     selectedTermLabel: term.selectedTermLabel || '历史课程',
     label: term.selectedTermLabel || '历史课程',
     termStart: term.termStart || '',
+    termStartStatus: calendar.termStartStatus,
+    actualWeek: calendar.actualWeek,
     totalWeeks: normalizeTotalWeeks(term.totalWeeks),
     totalWeeksSource: term.totalWeeksSource || 'saved',
     courseCount: coursesForAccount(db, term.accountId, term.termKey).length
@@ -1052,7 +1081,8 @@ app.put('/api/my/active-term/settings', requireLogin, (req, res) => {
   if (!Number.isInteger(totalWeeks) || totalWeeks < 1 || totalWeeks > 60) {
     return res.status(400).json({ ok: false, message: '学期总周数必须是 1 到 60 的整数' });
   }
-  if (termStart && !normalizeDateText(termStart)) return res.status(400).json({ ok: false, message: '开学日期格式应为 YYYY-MM-DD' });
+  if (termStart && !normalizeDateText(termStart)) return res.status(400).json({ ok: false, message: '第一教学周周一日期无效，格式应为 YYYY-MM-DD' });
+  if (termStart && !isMondayTermStart(termStart)) return res.status(400).json({ ok: false, message: 'termStart 必须是第一教学周的周一；日期未知时可以留空' });
   term.totalWeeks = totalWeeks;
   term.totalWeeksSource = 'manual';
   term.termStart = normalizeDateText(termStart);
@@ -1394,7 +1424,8 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     xnm: requested.xnm,
     xqm: requested.xqm,
     selectedTermLabel: requested.selectedTermLabel,
-    termStart: analysis.explicitTermStart || nextTerm?.termStart || '',
+    // 课程导入不推测开学日期；学校公布后由用户在当前学期设置中确认第一教学周周一。
+    termStart: nextTerm?.termStart || '',
     totalWeeks,
     totalWeeksSource,
     createdAt: nextTerm?.createdAt || importedAt,

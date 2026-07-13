@@ -171,6 +171,33 @@ test('portrait Web timetable renders one spanning DOM and persists the section-r
     tableSize: 'screenshot'
   });
 
+  const importWhileUnknown = await evaluate(`(async()=>{const response=await fetch('/api/my/import',{method:'POST',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({replace:false,courses:[{name:'Unknown Term Import',day:7,slot:12,weeks:[1]}]})});return {status:response.status,body:await response.json()};})()`);
+  assert.equal(importWhileUnknown.status, 200);
+  assert.equal(importWhileUnknown.body.ok, true);
+
+  const unknownState = await evaluate(`(()=>{state.previewWeek=4;renderAll();showTodayCourses();const payload=buildWidgetPayload();return {status:getTermCalendarStateForUi().status,actualWeek:getWeek(),displayedWeek:getSelectedWeek(),todayHeads:document.querySelectorAll('.head.today').length,datedHeads:[...document.querySelectorAll('.day-sub')].filter(node=>/\\d{2}\\/\\d{2}/.test(node.textContent)).length,weekTitle:document.querySelector('#weekTitle')?.textContent||'',statusPill:document.querySelector('#statusPill')?.textContent||'',toast:document.querySelector('#toast')?.textContent||'',widgetStatus:payload.meta.termStartStatus,widgetWeek:payload.meta.currentWeek};})()`);
+  assert.deepEqual(unknownState, {
+    status: 'unknown',
+    actualWeek: null,
+    displayedWeek: 4,
+    todayHeads: 0,
+    datedHeads: 0,
+    weekTitle: '预览第 4 周 · 历史课程',
+    statusPill: '开学日期待确认',
+    toast: '开学日期尚未确认，暂时无法定位今天的课程',
+    widgetStatus: 'unknown',
+    widgetWeek: null
+  });
+
+  const termSetting = await evaluate(`(async()=>{const invalid=await fetch('/api/my/active-term/settings',{method:'PUT',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({totalWeeks:20,termStart:'2099-01-06'})});const valid=await fetch('/api/my/active-term/settings',{method:'PUT',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({totalWeeks:20,termStart:'2099-01-05'})});const data=await valid.json();state.activeTerm=data.activeTerm;state.previewWeek=null;renderAll();const known={status:getTermCalendarStateForUi().status,serverStatus:data.activeTerm.termStartStatus,serverWeek:data.activeTerm.actualWeek,actualWeek:getWeek(),todayHeads:document.querySelectorAll('.head.today').length,firstDate:document.querySelector('.day-sub')?.textContent||''};const cleared=await fetch('/api/my/active-term/settings',{method:'PUT',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({totalWeeks:20,termStart:''})});const clearedData=await cleared.json();state.activeTerm=clearedData.activeTerm;state.previewWeek=null;renderAll();return {invalidStatus:invalid.status,validStatus:valid.status,clearStatus:cleared.status,known,clearedState:getTermCalendarStateForUi().status,clearedServerState:clearedData.activeTerm.termStartStatus};})()`);
+  assert.deepEqual(termSetting, {
+    invalidStatus: 400,
+    validStatus: 200,
+    clearStatus: 200,
+    known: { status: 'before-term', serverStatus: 'before-term', serverWeek: 0, actualWeek: 0, todayHeads: 0, firstDate: '01/05' },
+    clearedState: 'unknown',
+    clearedServerState: 'unknown'
+  });
   await evaluate(`saveCourseSettings({...state.courseSettings,showSectionRange:true});renderAll();true`);
   const enabled = await evaluate(`(()=>{const cards=[...document.querySelectorAll('.logical-range-component .course[title="Range Course"]')];return {cardCount:cards.length,gridRow:cards[0].parentElement.style.gridRow,sectionCount:(cards[0].textContent.match(/1-2/g)||[]).length};})()`);
   assert.deepEqual(enabled, { cardCount: 1, gridRow: '2 / span 2', sectionCount: 1 });

@@ -1,8 +1,88 @@
 package com.xiaode.importhelper
 
+import java.util.Calendar
+import java.util.GregorianCalendar
+import java.util.TimeZone
+
 /** Widget 和后台刷新只接受当前账号冻结的 activeTermKey。 */
 internal fun belongsToActiveTerm(courseTermKey: String, activeTermKey: String): Boolean {
     return activeTermKey.isNotBlank() && courseTermKey == activeTermKey
+}
+
+internal enum class TermCalendarStatus {
+    UNKNOWN,
+    BEFORE_TERM,
+    ACTIVE,
+    AFTER_TERM
+}
+
+internal data class TermCalendarState(
+    val status: TermCalendarStatus,
+    val actualWeek: Int?,
+    val displayedWeek: Int,
+    val todayInDisplayedWeek: Boolean,
+    val todayDayIndex: Int,
+    val daysUntilStart: Int? = null,
+    val daysAfterEnd: Int? = null
+)
+
+private const val MILLIS_PER_DAY = 86_400_000L
+
+private fun calendarDayOrdinal(calendar: Calendar): Long {
+    val utc = GregorianCalendar(TimeZone.getTimeZone("UTC")).apply {
+        isLenient = false
+        clear()
+        set(calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+    }
+    return utc.timeInMillis / MILLIS_PER_DAY
+}
+
+private fun termStartDayOrdinal(termStart: String): Long? {
+    val match = Regex("^(20\\d{2})-(\\d{2})-(\\d{2})$").matchEntire(termStart.trim()) ?: return null
+    return try {
+        val utc = GregorianCalendar(TimeZone.getTimeZone("UTC")).apply {
+            isLenient = false
+            clear()
+            set(match.groupValues[1].toInt(), match.groupValues[2].toInt() - 1, match.groupValues[3].toInt(), 0, 0, 0)
+        }
+        val millis = utc.timeInMillis
+        if (utc.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) null else millis / MILLIS_PER_DAY
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+}
+
+/** actualWeek 只描述现实状态；unknown 不计算，未开学为 0，预览周单独保存。 */
+internal fun getTermCalendarState(
+    termStart: String,
+    totalWeeks: Int,
+    today: Calendar,
+    requestedDisplayedWeek: Int? = null
+): TermCalendarState {
+    val safeTotalWeeks = totalWeeks.coerceIn(1, 60)
+    val todayDayIndex = if (today.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY) 7 else today.get(Calendar.DAY_OF_WEEK) - 1
+    val requested = requestedDisplayedWeek?.coerceIn(1, safeTotalWeeks)
+    val startOrdinal = termStartDayOrdinal(termStart)
+        ?: return TermCalendarState(TermCalendarStatus.UNKNOWN, null, requested ?: 1, false, todayDayIndex)
+    val todayOrdinal = calendarDayOrdinal(today)
+    val diffDays = (todayOrdinal - startOrdinal).toInt()
+    if (diffDays < 0) {
+        return TermCalendarState(TermCalendarStatus.BEFORE_TERM, 0, requested ?: 1, false, todayDayIndex, daysUntilStart = -diffDays)
+    }
+    val actualWeek = diffDays / 7 + 1
+    if (actualWeek > safeTotalWeeks) {
+        val endOrdinal = startOrdinal + safeTotalWeeks * 7L - 1L
+        return TermCalendarState(
+            TermCalendarStatus.AFTER_TERM,
+            actualWeek,
+            requested ?: safeTotalWeeks,
+            false,
+            todayDayIndex,
+            daysAfterEnd = (todayOrdinal - endOrdinal).toInt()
+        )
+    }
+    val displayed = requested ?: actualWeek
+    return TermCalendarState(TermCalendarStatus.ACTIVE, actualWeek, displayed, displayed == actualWeek, todayDayIndex)
 }
 
 /**
