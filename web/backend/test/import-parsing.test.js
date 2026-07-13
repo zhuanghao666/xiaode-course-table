@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   analyzeJwxtImport,
+  buildCourseDisplayRecords,
   IMPORT_REASON_CODES,
   mergeCourseRecords,
   parseSectionsDetailed,
@@ -294,6 +295,97 @@ test('course consolidation preserves manual text and never merges different unkn
     { ...base, id: 'room-b', slot: 10, name: '地点隔离', location: '', room: 'B202' }
   ]).courses;
   assert.equal(differentRooms.length, 2);
+});
+
+test('course consolidation only joins exactly adjacent records with known matching weeks', () => {
+  const base = {
+    userId: 'user-a',
+    accountId: 'account-a',
+    termKey: 'account-a:2025:3',
+    source: 'jwxt',
+    day: 3,
+    name: 'Range safety course',
+    location: 'A101',
+    teacher: 'Teacher A',
+    oddEven: 'all'
+  };
+
+  const unknownAdjacent = mergeCourseRecords([
+    { ...base, id: 'unknown-1', slot: 1, startSlot: 1, endSlot: 1, weeks: [], weekPattern: 'unknown' },
+    { ...base, id: 'unknown-2', slot: 2, startSlot: 2, endSlot: 2, weeks: [], weekPattern: 'unknown' }
+  ]).courses;
+  assert.equal(unknownAdjacent.length, 2);
+
+  const overlapping = mergeCourseRecords([
+    { ...base, id: 'range-1-2', slot: 1, startSlot: 1, endSlot: 2, weeks: [1, 2] },
+    { ...base, id: 'range-2-3', slot: 2, startSlot: 2, endSlot: 3, weeks: [1, 2] }
+  ]).courses;
+  assert.equal(overlapping.length, 2);
+
+  const repeatedRange = mergeCourseRecords([
+    { ...base, id: 'range-3-4-a', slot: 3, startSlot: 3, endSlot: 4, weeks: [1, 2] },
+    { ...base, id: 'range-3-4-b', slot: 4, startSlot: 3, endSlot: 4, weeks: [2, 1] }
+  ]);
+  assert.equal(repeatedRange.courses.length, 1);
+  assert.deepEqual(
+    { startSlot: repeatedRange.courses[0].startSlot, endSlot: repeatedRange.courses[0].endSlot },
+    { startSlot: 3, endSlot: 4 }
+  );
+  assert.equal(repeatedRange.events[0].reasonCode, IMPORT_REASON_CODES.DUPLICATE_EXACT);
+});
+
+test('JWXT display projection folds same-session schedule variants without deleting raw records', () => {
+  const base = {
+    userId: 'user-a',
+    accountId: 'account-a',
+    termKey: 'account-a:2025:3',
+    source: 'jwxt',
+    sourceDetail: 'kbList',
+    importTraceId: 'trace-1',
+    classGroup: 'class-1',
+    category: 'custom',
+    day: 3,
+    slot: 1,
+    startSlot: 1,
+    endSlot: 2,
+    name: 'Chemical Engineering Principles',
+    location: 'Building A 0411',
+    oddEven: 'all'
+  };
+  const raw = [
+    { ...base, id: 'full', weeks: [1, 2, 3, 4], teacher: 'Teacher Foreign' },
+    { ...base, id: 'first-half', weeks: [1, 2], teacher: 'Teacher Tian' },
+    { ...base, id: 'second-half', weeks: [3, 4], teacher: 'Teacher Wang' }
+  ];
+
+  const strict = mergeCourseRecords(raw).courses;
+  assert.equal(strict.length, 3);
+  const display = buildCourseDisplayRecords(strict);
+  assert.equal(display.length, 1);
+  assert.deepEqual(
+    { startSlot: display[0].startSlot, endSlot: display[0].endSlot, weeks: display[0].weeks },
+    { startSlot: 1, endSlot: 2, weeks: [1, 2, 3, 4] }
+  );
+  assert.deepEqual(display[0].underlyingIds, ['full', 'first-half', 'second-half']);
+  assert.equal(display[0].scheduleVariants.length, 3);
+  assert.equal(display[0].logicalSession, true);
+  assert.equal(display[0].teacher, 'Teacher Foreign / Teacher Tian / Teacher Wang');
+  assert.deepEqual(raw.map((course) => course.id), ['full', 'first-half', 'second-half']);
+
+  const boundaries = buildCourseDisplayRecords([
+    raw[0],
+    { ...raw[1], id: 'other-room', location: 'Building B 0202' },
+    { ...raw[1], id: 'other-class', classGroup: 'class-2' },
+    { ...raw[1], id: 'other-trace', importTraceId: 'trace-2' },
+    { ...raw[1], id: 'manual', source: 'manual' }
+  ]);
+  assert.equal(boundaries.length, 5);
+
+  const unknownWeeks = buildCourseDisplayRecords([
+    { ...base, id: 'unknown-a', weeks: [], weekPattern: 'unknown-a', teacher: '' },
+    { ...base, id: 'unknown-b', weeks: [], weekPattern: 'unknown-b', teacher: '' }
+  ]);
+  assert.equal(unknownWeeks.length, 2);
 });
 
 test('strict term parser ignores unknown arrays and filters records from another term', () => {

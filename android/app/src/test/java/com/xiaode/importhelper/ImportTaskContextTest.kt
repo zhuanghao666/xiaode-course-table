@@ -84,4 +84,26 @@ class ImportTaskContextTest {
         assertEquals("第1-2节", courseSectionLabel(CourseSlotRange(1, 2)))
         assertEquals("第3节", courseSectionLabel(CourseSlotRange(3, 3)))
     }
+
+    @Test
+    fun widgetDropsOnlyExactLogicalRangeDuplicates() {
+        val base = WidgetUpdater.Course(
+            termKey = "account-a:2025:3",
+            name = "Range Course",
+            teacher = "Teacher A",
+            location = "Room 0411",
+            day = 3,
+            startSlot = 1,
+            endSlot = 2,
+            weeks = setOf(1, 2),
+            oddEven = "all"
+        )
+        val duplicateWithWhitespace = base.copy(name = "  Range   Course  ", location = " Room 0411 ")
+        val differentWeeks = base.copy(weeks = setOf(3, 4))
+
+        val result = WidgetUpdater.deduplicateCourses(listOf(base, duplicateWithWhitespace, differentWeeks))
+        assertEquals(2, result.size)
+        assertEquals(base, result[0])
+        assertEquals(differentWeeks, result[1])
+    }
 }

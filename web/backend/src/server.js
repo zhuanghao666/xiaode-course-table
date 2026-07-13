@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import {
   analyzeJwxtImport,
+  buildCourseDisplayRecords,
   IMPORT_REASON_CODES,
   mergeCourseRecords,
   parseWeeksDetailed
@@ -543,14 +544,24 @@ function coursesForAccount(db, accountId, termKey = activeTermForAccount(db, acc
   if (!termKey) return [];
   const scoped = allCoursesForAccount(db, accountId).filter((course) => course.termKey === termKey);
   // 输出层忽略存储来源合并逻辑课程；底层仍保留 source 边界，保证 jwxt replace 不会吞掉手工课程。
-  return mergeCourseRecords(scoped).courses;
+  return buildCourseDisplayRecords(mergeCourseRecords(scoped).courses);
 }
 
 function retainedLogicalCourse(db, target) {
   const logical = coursesForAccount(db, target.accountId, target.termKey);
   const byId = logical.find((course) => course.id === target.id);
   if (byId) return byId;
-  return logical.find((course) => mergeCourseRecords([course, target]).courses.length === 1) || null;
+  const byUnderlyingId = logical.find((course) => Array.isArray(course.underlyingIds) && course.underlyingIds.includes(target.id));
+  if (byUnderlyingId) return byUnderlyingId;
+  const targetStart = Number(target.startSlot ?? target.slot);
+  const targetEnd = Number(target.endSlot ?? targetStart);
+  return logical.find((course) => {
+    const courseStart = Number(course.startSlot ?? course.slot);
+    const courseEnd = Number(course.endSlot ?? courseStart);
+    if (courseStart > targetStart || courseEnd < targetEnd) return false;
+    const projectedRange = { ...course, slot: targetStart, startSlot: targetStart, endSlot: targetEnd };
+    return mergeCourseRecords([projectedRange, target]).courses.length === 1;
+  }) || null;
 }
 
 function publicTerm(db, term) {

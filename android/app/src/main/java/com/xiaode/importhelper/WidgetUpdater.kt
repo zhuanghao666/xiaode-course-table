@@ -49,6 +49,24 @@ object WidgetUpdater {
         val subText: String
     )
 
+    // Web 已发送逻辑课程；这里再去除旧缓存中的完全重复范围，避免 Widget 选择到重复副本。
+    internal fun deduplicateCourses(courses: List<Course>): List<Course> {
+        fun normalized(value: String) = value.replace(Regex("\\s+"), " ").trim()
+        return courses.distinctBy { course ->
+            listOf(
+                course.termKey,
+                normalized(course.name),
+                normalized(course.teacher),
+                normalized(course.location),
+                course.day,
+                course.startSlot,
+                course.endSlot,
+                course.weeks.sorted(),
+                course.oddEven
+            )
+        }
+    }
+
     fun updateAll(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
         val ids = manager.getAppWidgetIds(ComponentName(context, XiaoDeWidgetProvider::class.java))
@@ -191,7 +209,7 @@ object WidgetUpdater {
                 )
             )
         }
-        return list
+        return deduplicateCourses(list)
     }
 
     private fun getWeek(termStart: String, totalWeeks: Int, now: Calendar): Int {

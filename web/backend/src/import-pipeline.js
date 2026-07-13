@@ -435,6 +435,7 @@ function normalizeMergeCourse(original = {}, order = 0) {
     weeks,
     oddEven,
     weekText: formatWeekText(weeks, oddEven) || firstNonEmptyStoredCourseText(original.weekText, original.weekPattern),
+    _mergeWeeksKnown: effectiveWeeks(weeks, oddEven).length > 0,
     _mergeRangeValid: range.valid,
     _mergeOrder: order
   };
@@ -459,9 +460,8 @@ function scheduleFingerprint(course) {
   return [course.accountId || '', course.termKey || '', Number(course.day)].join('|');
 }
 
-function rangesTouch(left, right) {
-  return Number(right.startSlot) <= Number(left.endSlot) + 1
-    && Number(right.endSlot) >= Number(left.startSlot) - 1;
+function rangesAreAdjacent(left, right) {
+  return Number(left.endSlot) + 1 === Number(right.startSlot);
 }
 
 function rangesOverlap(left, right) {
@@ -503,25 +503,24 @@ export function mergeCourseRecords(courses = [], options = {}) {
 
     const mergeKey = mergeFingerprint(course, options);
     const sameIdentityRanges = identityMap.get(mergeKey) || [];
-    const touching = sameIdentityRanges.find((kept) => rangesTouch(kept, course));
-    if (touching) {
-      const beforeRange = { startSlot: touching.startSlot, endSlot: touching.endSlot };
-      touching.startSlot = Math.min(touching.startSlot, course.startSlot);
-      touching.endSlot = Math.max(touching.endSlot, course.endSlot);
-      touching.slot = touching.startSlot;
+    const adjacent = sameIdentityRanges.find((kept) => kept._mergeWeeksKnown && course._mergeWeeksKnown && rangesAreAdjacent(kept, course));
+    if (adjacent) {
+      const beforeRange = { startSlot: adjacent.startSlot, endSlot: adjacent.endSlot };
+      adjacent.endSlot = course.endSlot;
+      adjacent.slot = adjacent.startSlot;
       events.push({
         reasonCode: IMPORT_REASON_CODES.MERGED_SAME_COURSE,
-        keptCandidateId: touching._candidateId || null,
+        keptCandidateId: adjacent._candidateId || null,
         mergedCandidateId: course._candidateId || null,
-        keptCourseIndex: merged.indexOf(touching),
-        weeksBefore: touching.weeks,
+        keptCourseIndex: merged.indexOf(adjacent),
+        weeksBefore: adjacent.weeks,
         mergedWeeks: course.weeks,
-        weeksAfter: touching.weeks,
+        weeksAfter: adjacent.weeks,
         rangeBefore: beforeRange,
         mergedRange: { startSlot: course.startSlot, endSlot: course.endSlot },
-        rangeAfter: { startSlot: touching.startSlot, endSlot: touching.endSlot }
+        rangeAfter: { startSlot: adjacent.startSlot, endSlot: adjacent.endSlot }
       });
-      exactMap.set(exactFingerprint(touching), touching);
+      exactMap.set(exactFingerprint(adjacent), adjacent);
       continue;
     }
 
@@ -571,12 +570,97 @@ export function mergeCourseRecords(courses = [], options = {}) {
   }
 
   for (const course of finalCourses) {
+    delete course._mergeWeeksKnown;
     delete course._mergeRangeValid;
     delete course._mergeOrder;
   }
 
   // 旧数据中无法安全判断范围的记录必须原样保留，迁移不能静默删除用户课程。
   return { courses: [...finalCourses, ...passthrough], events, warnings };
+}
+
+function jwxtDisplaySessionFingerprint(course) {
+  const range = courseSectionRange(course);
+  const classGroup = normalizeStoredCourseText(course.classGroup);
+  const importTraceId = normalizeStoredCourseText(course.importTraceId);
+  if (course.source !== 'jwxt' || !classGroup || !importTraceId || !range.valid || effectiveCourseWeeks(course).length === 0) return '';
+  return [
+    normalizeStoredCourseText(course.accountId),
+    normalizeStoredCourseText(course.termKey),
+    Number(course.day ?? course.weekday),
+    firstNonEmptyStoredCourseText(course.name, course.courseName),
+    firstNonEmptyStoredCourseText(course.location, course.room),
+    range.startSlot,
+    range.endSlot,
+    classGroup,
+    normalizeStoredCourseText(course.category || 'custom'),
+    Boolean(course.isAdjusted),
+    normalizeStoredCourseText(course.sourceDetail),
+    importTraceId
+  ].join('|');
+}
+
+function courseScheduleVariants(course) {
+  if (Array.isArray(course.scheduleVariants) && course.scheduleVariants.length) {
+    return course.scheduleVariants.map((variant) => ({ ...variant }));
+  }
+  return [{
+    id: course.id || '',
+    weeks: uniqueSorted(course.weeks || []),
+    weekText: firstNonEmptyStoredCourseText(course.weekText, course.weekPattern),
+    oddEven: course.oddEven || 'all',
+    teacher: normalizeStoredCourseText(course.teacher),
+    source: course.source || ''
+  }];
+}
+
+// 教务系统可能同时返回“整学期教师”和“分周教师”记录。底层记录仍严格保留，
+// 这里只为 API/Widget 生成同一导入批次、同一班级和同一完整范围的一张逻辑展示卡。
+export function buildCourseDisplayRecords(courses = []) {
+  const output = [];
+  const grouped = new Map();
+  for (const course of courses || []) {
+    const key = jwxtDisplaySessionFingerprint(course);
+    if (!key) {
+      output.push(course);
+      continue;
+    }
+    if (!grouped.has(key)) {
+      const entry = { index: output.length, courses: [] };
+      grouped.set(key, entry);
+      output.push(null);
+    }
+    grouped.get(key).courses.push(course);
+  }
+
+  for (const { index, courses: variants } of grouped.values()) {
+    if (variants.length === 1) {
+      output[index] = variants[0];
+      continue;
+    }
+    const sample = variants[0];
+    const underlyingIds = [...new Set(variants.flatMap((course) => {
+      const ids = Array.isArray(course.underlyingIds) ? course.underlyingIds : [course.id];
+      return ids.map((id) => normalizeStoredCourseText(id)).filter(Boolean);
+    }))];
+    const scheduleVariants = variants.flatMap(courseScheduleVariants);
+    const weeks = uniqueSorted(scheduleVariants.flatMap((variant) => effectiveWeeks(uniqueSorted(variant.weeks || []), variant.oddEven || 'all')));
+    const teachers = [...new Set(scheduleVariants.map((variant) => normalizeStoredCourseText(variant.teacher)).filter(Boolean))];
+    output[index] = {
+      ...sample,
+      weeks,
+      oddEven: 'all',
+      weekText: formatWeekText(weeks, 'all') || sample.weekText || '',
+      teacher: teachers.join(' / '),
+      underlyingIds,
+      sourceIds: underlyingIds,
+      scheduleVariants,
+      variantCount: scheduleVariants.length,
+      logicalSession: true
+    };
+  }
+
+  return output.filter(Boolean);
 }
 
 function candidateFieldNames(item) {

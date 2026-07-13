@@ -842,7 +842,7 @@
     function firstCourseText(...values){ for(const value of values){ const text=normalizeCourseText(value); if(text) return text; } return ''; }
     function courseWeeks(c){ return [...new Set((Array.isArray(c?.weeks)?c.weeks:[]).map(Number).filter(Number.isInteger))].sort((a,b)=>a-b); }
     function effectiveCourseWeeks(c){ const parity=String(c?.oddEven||'all'); return courseWeeks(c).filter(w=>parity==='odd'?w%2===1:(parity==='even'?w%2===0:true)); }
-    function courseWeeksFingerprint(c){ const raw=courseWeeks(c); const effective=effectiveCourseWeeks(c); return raw.length?`weeks:${effective.join(',')}`:`pattern:${normalizeCourseText(c?.weekPattern||c?.weekText||'')}|parity:${normalizeCourseText(c?.oddEven||'all')}`; }
+    function courseWeeksFingerprint(c){ const effective=effectiveCourseWeeks(c); return effective.length?`weeks:${effective.join(',')}`:`pattern:${normalizeCourseText(c?.weekPattern||c?.weekText||'')}|parity:${normalizeCourseText(c?.oddEven||'all')}`; }
     function courseStartSlot(c){ const value=Number(c?.startSlot??c?.startSection??c?.slot); return Number.isInteger(value)&&value>0?value:1; }
     function courseEndSlot(c){ const start=courseStartSlot(c); const value=Number(c?.endSlot??c?.endSection??c?.slot); return Number.isInteger(value)&&value>=start?value:start; }
     function courseCoversSlot(c,slot){ const value=Number(slot); return Number.isInteger(value)&&value>=courseStartSlot(c)&&value<=courseEndSlot(c); }
@@ -859,6 +859,12 @@
       const exactOf=options.exactOf||courseExactKey;
       const startOf=options.startOf||courseStartSlot;
       const endOf=options.endOf||courseEndSlot;
+      const weeksKnownOf=options.weeksKnownOf||((record)=>{
+        const weeks=[...new Set((Array.isArray(record?.weeks)?record.weeks:[]).map(Number).filter(Number.isInteger))];
+        const parity=String(record?.oddEven||'all');
+        return weeks.some(week=>parity==='odd'?week%2===1:(parity==='even'?week%2===0:true));
+      });
+      const idsOf=options.idsOf||((record)=>[...(Array.isArray(record?.underlyingIds)?record.underlyingIds:[]),record?.id].filter(Boolean));
       const exact=new Map();
       (records||[]).forEach(record=>{ const key=exactOf(record); if(!exact.has(key)) exact.set(key,record); });
       const buckets=new Map();
@@ -870,15 +876,17 @@
         bucket.forEach(record=>{
           const startSlot=Number(startOf(record));
           const endSlot=Math.max(startSlot,Number(endOf(record)));
+          const weeksKnown=Boolean(weeksKnownOf(record));
+          const recordIds=[...new Set(idsOf(record))];
           const last=merged[merged.length-1];
-          if(last && startSlot<=last.endSlot+1){
-            last.endSlot=Math.max(last.endSlot,endSlot);
+          if(last && last.weeksKnown && weeksKnown && startSlot===last.endSlot+1){
+            last.endSlot=endSlot;
             last.span=last.endSlot-last.startSlot+1;
             last.courses.push(record);
-            if(record?.id&&!last.ids.includes(record.id)) last.ids.push(record.id);
+            recordIds.forEach(id=>{ if(!last.ids.includes(id)) last.ids.push(id); });
             return;
           }
-          merged.push({key,course:record,count:1,ids:record?.id?[record.id]:[],courses:[record],startSlot,endSlot,span:endSlot-startSlot+1});
+          merged.push({key,course:record,count:1,ids:recordIds,courses:[record],startSlot,endSlot,span:endSlot-startSlot+1,weeksKnown});
         });
         result.push(...merged);
       });
@@ -1080,7 +1088,7 @@
       applyTableSize(mode,{width:defaultTableDayWidth(mode),height:defaultTableRowHeight(mode),fontSize:defaultTableFontSize(mode)});
       if(mode==='screenshot'){
         state.infoMode='compact';
-        saveCourseSettings({...state.courseSettings,showLocation:true,showTeacher:false,showSectionRange:false});
+        saveCourseSettings({...state.courseSettings,showLocation:true,showTeacher:false});
       }
       renderAll();
       schedulePreferenceSave();

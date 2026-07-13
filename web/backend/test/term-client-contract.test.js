@@ -104,6 +104,20 @@ test('web range model renders each logical course once inside overlap components
   const components = buildOverlapComponents(items);
   assert.equal(components.length, 3, 'independent slot 4 and 6 ranges stay separate when slot 5 is hidden');
   assert.equal(components[0].items.length, 4, 'A(1-2) and three distinct slot-2 conflicts share one component without duplicating A');
+
+  const alreadyRanged = buildLogicalCourseItems([
+    { ...base, id: 'range-a', startSlot: 3, endSlot: 4 },
+    { ...base, id: 'range-b', startSlot: 3, endSlot: 4 }
+  ], { identityOf, exactOf, startOf, endOf });
+  assert.equal(alreadyRanged.length, 1);
+  assert.deepEqual([alreadyRanged[0].startSlot, alreadyRanged[0].endSlot], [3, 4]);
+
+  const unknownBase = { ...base, name: 'Unknown week course', weeks: [], weekPattern: 'unknown' };
+  const unknownAdjacent = buildLogicalCourseItems([
+    { ...unknownBase, id: 'unknown-1', startSlot: 8, endSlot: 8 },
+    { ...unknownBase, id: 'unknown-2', startSlot: 9, endSlot: 9 }
+  ], { identityOf, exactOf, startOf, endOf });
+  assert.equal(unknownAdjacent.length, 2, 'unknown week patterns must not be joined into a range');
 });
 
 test('shared course-card formatting exposes location and independently controls teacher and section text', () => {
@@ -112,6 +126,10 @@ test('shared course-card formatting exposes location and independently controls 
   assert.match(frontend, /course-teacher/);
   assert.match(frontend, /course-section/);
   assert.match(frontend, /showSectionRange:\s*true/);
+  assert.match(frontend, /settings\.showSectionRange\s*&&\s*end>start/);
+  const screenshotSetter = frontend.match(/function setTableSize\([^)]*\)\{([\s\S]*?)\n\s*function setTableDayWidth/);
+  assert.ok(screenshotSetter, 'screenshot size handler must remain inspectable');
+  assert.doesNotMatch(screenshotSetter[1], /showSectionRange\s*:/, 'screenshot must use the current account setting instead of overwriting it');
   assert.doesNotMatch(frontend, /data-table-size="screenshot"[\s\S]{0,160}\.meta2\s*\{[^}]*display\s*:\s*none/i);
 });
 

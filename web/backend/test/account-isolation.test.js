@@ -195,13 +195,17 @@ test('courses, settings, reminders and imports are isolated by accountId', async
   assert.deepEqual((await request(baseUrl, '/api/auth/me', { token: tokenB })).data.courses.map((course) => course.name), ['B-化学']);
 
   const updatedPreferences = preferences('forest', 'cal-a-2');
+  updatedPreferences.courseSettings.showSectionRange = false;
   const preferenceUpdate = await request(baseUrl, '/api/my/preferences', {
     token: tokenA,
     method: 'PUT',
     body: { preferences: updatedPreferences }
   });
   assert.equal(preferenceUpdate.status, 200);
+  const meAAfterPreferenceUpdate = await request(baseUrl, '/api/auth/me', { token: tokenA });
   const meBAfterPreferenceUpdate = await request(baseUrl, '/api/auth/me', { token: tokenB });
+  assert.equal(meAAfterPreferenceUpdate.data.preferences.courseSettings.showSectionRange, false);
+  assert.equal(meBAfterPreferenceUpdate.data.preferences.courseSettings.showSectionRange, true);
   assert.equal(meBAfterPreferenceUpdate.data.preferences.theme, 'sunset');
   assert.equal(meBAfterPreferenceUpdate.data.preferences.reminderSettings.calendarId, 'cal-b');
 
@@ -512,4 +516,49 @@ test('/api/my/import append reports input count separately from logical result c
     { startSlot: logical[0].startSlot, endSlot: logical[0].endSlot },
     { startSlot: 1, endSlot: 2 }
   );
+});
+
+test('/api/auth/me exposes one JWXT logical session while preserving schedule variants on disk', async (t) => {
+  const initial = seedDb();
+  const base = {
+    userId: 'user-a',
+    accountId: 'account-a',
+    day: 3,
+    slot: 1,
+    startSlot: 1,
+    endSlot: 2,
+    name: 'Chemical Engineering Principles',
+    location: 'Building A 0411',
+    source: 'jwxt',
+    sourceDetail: 'kbList',
+    importTraceId: 'trace-family',
+    classGroup: 'class-family',
+    oddEven: 'all'
+  };
+  initial.courses = [
+    { ...base, id: 'family-full', weeks: [1, 2, 3, 4], teacher: 'Teacher Foreign' },
+    { ...base, id: 'family-first', weeks: [1, 2], teacher: 'Teacher Tian' },
+    { ...base, id: 'family-second', weeks: [3, 4], teacher: 'Teacher Wang' },
+    initial.courses.find((course) => course.id === 'course-b')
+  ];
+  const { baseUrl, dataFile } = await launchBackend(t, initial);
+  const login = await request(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    body: { username: 'alpha', password: 'pass-a' }
+  });
+
+  const me = await request(baseUrl, '/api/auth/me', { token: login.data.token });
+  assert.equal(me.status, 200);
+  assert.equal(me.data.courses.length, 1);
+  assert.equal(me.data.courses[0].logicalSession, true);
+  assert.deepEqual(me.data.courses[0].underlyingIds, ['family-full', 'family-first', 'family-second']);
+  assert.deepEqual(
+    { startSlot: me.data.courses[0].startSlot, endSlot: me.data.courses[0].endSlot },
+    { startSlot: 1, endSlot: 2 }
+  );
+
+  const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  const rawFamily = disk.courses.filter((course) => course.importTraceId === 'trace-family');
+  assert.equal(rawFamily.length, 3);
+  assert.deepEqual(rawFamily.map((course) => course.id), ['family-full', 'family-first', 'family-second']);
 });
