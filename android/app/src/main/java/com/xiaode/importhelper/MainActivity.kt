@@ -107,10 +107,14 @@ class MainActivity : Activity() {
         val traceId: String,
         val recognizedCount: Int,
         val filteredCount: Int,
+        val filteredWrongTermCount: Int,
+        val filteredUnknownSourceCount: Int,
         val mergedCount: Int,
         val afterCount: Int,
         val requestedTermLabel: String,
-        val effectiveTermLabel: String
+        val effectiveTermLabel: String,
+        val totalWeeks: Int,
+        val totalWeeksSource: String
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -966,6 +970,7 @@ class MainActivity : Activity() {
                 .put("selectedTermLabel", context.selectedTermLabel)
                 .put("xnm", context.xnm)
                 .put("xqm", context.xqm)
+                .put("replace", context.replace)
             val upload = postJson("$cleanServer/api/import-code/$codeForImport/submit", body)
             if (!upload.optBoolean("ok")) throw IOException(upload.optString("message", "上传失败"))
             val resultSummary = upload.optJSONObject("summary") ?: JSONObject()
@@ -988,10 +993,14 @@ class MainActivity : Activity() {
                 traceId = upload.optString("traceId", ""),
                 recognizedCount = resultSummary.optInt("recognized", convertedCount),
                 filteredCount = resultSummary.optInt("filtered", 0),
+                filteredWrongTermCount = resultSummary.optInt("filteredWrongTermCount", 0),
+                filteredUnknownSourceCount = resultSummary.optInt("filteredUnknownSourceCount", 0),
                 mergedCount = resultSummary.optInt("merged", 0),
                 afterCount = resultSummary.optInt("afterCount", upload.optInt("afterCount", saved)),
                 requestedTermLabel = requestedTerm.optString("label", context.selectedTermLabel),
-                effectiveTermLabel = effectiveTerm.optString("label", "")
+                effectiveTermLabel = effectiveTerm.optString("label", ""),
+                totalWeeks = upload.optInt("totalWeeks", 0),
+                totalWeeksSource = upload.optString("totalWeeksSource", "")
             )
         }) { summary ->
             serverUrl = cleanServer
@@ -1023,6 +1032,8 @@ class MainActivity : Activity() {
                 .put("recognized", summary.recognizedCount)
                 .put("accepted", summary.convertedCount)
                 .put("filtered", summary.filteredCount)
+                .put("filteredWrongTermCount", summary.filteredWrongTermCount)
+                .put("filteredUnknownSourceCount", summary.filteredUnknownSourceCount)
                 .put("merged", summary.mergedCount)
                 .put("written", summary.savedCount)
                 .put("beforeCount", summary.previousCount)
@@ -1062,6 +1073,8 @@ class MainActivity : Activity() {
             appendLine("成功识别候选：${summary.recognizedCount} 条")
             appendLine("写入小德课表：${summary.savedCount} 条")
             appendLine("合并：${summary.mergedCount} 条；过滤：${summary.filteredCount} 条")
+            appendLine("过滤其他学期：${summary.filteredWrongTermCount} 条；过滤未知来源：${summary.filteredUnknownSourceCount} 条")
+            if (summary.totalWeeks > 0) appendLine("学期总周数：${summary.totalWeeks}（${summary.totalWeeksSource.ifBlank { "已保存" }}）")
             if (summary.previousCount >= 0) appendLine("导入前原课程：${summary.previousCount} 条")
             if (summary.afterCount >= 0) appendLine("导入后当前账号课程：${summary.afterCount} 条")
             appendLine("模式：${if (summary.replace) "覆盖导入" else "追加导入"}")
@@ -1426,7 +1439,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildDiagnosticText(currentStatus: String): String = buildString {
-        appendLine("小德课表 App v30 · Web v40 学期参数修复版")
+        appendLine("小德课表 App v31 · Web v41 学期隔离与动态周数版")
         appendLine("serverUrl=${serverUrl.ifBlank { serverInput.text?.toString() ?: "" }}")
         appendLine("appUrl=${if (::appWebView.isInitialized) appWebView.url else ""}")
         appendLine("importMode=$inImportMode")

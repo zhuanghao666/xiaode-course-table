@@ -51,4 +51,12 @@ class ImportTaskContextTest {
         assertEquals(original, restored)
         assertEquals(null, ImportTaskContext.restore(original.persistedFields() - "xqm", true, 2L))
     }
+
+    @Test
+    fun widgetCourseScopeRequiresTheExactActiveTermKey() {
+        assertEquals(true, belongsToActiveTerm("account-a:2025:3", "account-a:2025:3"))
+        assertEquals(false, belongsToActiveTerm("account-a:2025:12", "account-a:2025:3"))
+        assertEquals(false, belongsToActiveTerm("account-b:2025:3", "account-a:2025:3"))
+        assertEquals(false, belongsToActiveTerm("", "account-a:2025:3"))
+    }
 }

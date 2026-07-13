@@ -29,6 +29,7 @@ object WidgetUpdater {
     )
 
     data class Course(
+        val termKey: String,
         val name: String,
         val teacher: String,
         val location: String,
@@ -96,15 +97,19 @@ object WidgetUpdater {
         try {
             val json = JSONObject(payload)
             val accountId = json.optString("accountId", "").trim()
+            val activeTermKey = json.optString("activeTermKey", "").trim()
             if (accountId.isBlank() || accountId != WidgetDataStore.getActiveAccountId(context)) {
                 throw IllegalStateException("Widget account context is invalid")
+            }
+            if (activeTermKey.isBlank() || activeTermKey != WidgetDataStore.getActiveTermKey(context)) {
+                throw IllegalStateException("Widget term context is invalid")
             }
             val scheduleName = json.optString("scheduleName", "我的课表").ifBlank { "我的课表" }
             val meta = json.optJSONObject("meta") ?: JSONObject()
             val termStart = meta.optString("termStart", "")
-            val totalWeeks = meta.optInt("totalWeeks", 17)
+            val totalWeeks = meta.optInt("totalWeeks", 20).coerceIn(1, 60)
             val slots = parseSlots(json.optJSONArray("slots") ?: JSONArray())
-            val courses = parseCourses(json.optJSONArray("courses") ?: JSONArray())
+            val courses = parseCourses(json.optJSONArray("courses") ?: JSONArray(), activeTermKey)
             val now = Calendar.getInstance()
             val week = getWeek(termStart, totalWeeks, now)
             val display = findDisplayCourse(courses, slots, week, now)
@@ -152,15 +157,18 @@ object WidgetUpdater {
         return map
     }
 
-    private fun parseCourses(array: JSONArray): List<Course> {
+    private fun parseCourses(array: JSONArray, activeTermKey: String): List<Course> {
         val list = mutableListOf<Course>()
         for (i in 0 until array.length()) {
             val o = array.optJSONObject(i) ?: continue
+            val termKey = o.optString("termKey", "").trim()
+            if (!belongsToActiveTerm(termKey, activeTermKey)) continue
             val weeksArray = o.optJSONArray("weeks") ?: JSONArray()
             val weeks = mutableSetOf<Int>()
             for (j in 0 until weeksArray.length()) weeks.add(weeksArray.optInt(j))
             list.add(
                 Course(
+                    termKey = termKey,
                     name = o.optString("name", ""),
                     teacher = o.optString("teacher", ""),
                     location = o.optString("location", ""),

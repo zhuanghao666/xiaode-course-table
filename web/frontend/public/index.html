@@ -63,7 +63,7 @@
     /* v17: App 化收敛：隐藏冗余头图、当前功能面板、账号入口、全局主题联动 */
     #heroSection{display:none!important}
     #mainSection>.sub{display:none!important}
-    #termLine{display:none!important}
+    #termLine{display:block!important}.term-select{max-width:260px;border:1px solid rgba(160,170,182,.35);border-radius:12px;background:rgba(255,255,255,.9);padding:8px 10px;color:var(--text);font:inherit;font-weight:850}
     .account-avatar{position:absolute;right:16px;top:12px;z-index:12;width:34px;height:34px;border:0;border-radius:50%;background:linear-gradient(135deg,var(--accent),#7f76a4);color:#fff;font-size:17px;font-weight:900;box-shadow:0 8px 18px rgba(70,80,96,.14);cursor:pointer;display:grid;place-items:center;opacity:.92} .account-avatar:hover{transform:translateY(-1px);opacity:1}
     .account-avatar.hidden{display:none!important}
     .feature-hub{margin-top:16px}.feature-title{display:flex;align-items:center;justify-content:space-between}.feature-title small{font-size:13px;color:var(--muted);font-weight:800}
@@ -572,11 +572,11 @@
             <div class="row module-class-group"><label>班级</label><input id="courseClassGroup" placeholder="可选，例如：化学2班" /></div>
             <div class="row"><label>星期</label><select id="courseDay"></select></div>
             <div class="row"><label>节次</label><select id="courseSlot"></select></div>
-            <div class="row"><label>周次文本</label><input id="courseWeekText" placeholder="1-17周 / 5周 / 1-17周(单)" /></div>
+            <div class="row"><label>周次文本</label><input id="courseWeekText" placeholder="例如 1-20周 / 5周 / 1-20周(单)" /></div>
             <div class="row"><label>单双周</label><select id="courseOddEven"><option value="all">全部</option><option value="odd">单周</option><option value="even">双周</option></select></div>
             <div class="row"><label>分类</label><select id="courseCategory"><option value="public_required">公共必修</option><option value="major_required">专业必修</option><option value="major_elective">专业选修</option><option value="public_elective">公共选修</option><option value="lab">实验</option><option value="custom">自定义</option></select></div>
           </div>
-          <div class="inline"><button class="btn primary" id="saveCourseBtn">保存课程</button><button class="btn ghost" id="resetCourseBtn">清空表单</button><button class="btn danger hidden" id="deleteCourseBtn">删除当前课程</button><button class="btn danger" id="clearAllCoursesBtn">一键清空我的课表</button></div>
+          <div class="inline"><button class="btn primary" id="saveCourseBtn">保存课程</button><button class="btn ghost" id="resetCourseBtn">清空表单</button><button class="btn danger hidden" id="deleteCourseBtn">删除当前课程</button><button class="btn danger" id="clearAllCoursesBtn">清空当前学期课表</button></div>
           <div class="legacy-import-hidden" aria-hidden="true">
             <textarea id="importText" placeholder="day,slot,name,teacher,location,weekText,oddEven,category"></textarea>
             <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.pdf" />
@@ -661,7 +661,7 @@
     function loadAccountLocal(base,fallback=''){const scoped=localStorage.getItem(accountStorageKey(base));return scoped===null?(localStorage.getItem(base)??fallback):scoped}
     function saveAccountLocal(base,value,accountId=state.accountId){localStorage.setItem(accountStorageKey(base,accountId),String(value))}
     function loadCourseSettings(){try{const scoped=localStorage.getItem(accountStorageKey('xiaodeCourseSettings'));const legacy=localStorage.getItem('xiaodeCourseSettings');return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
-    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
+    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],activeTerm:null,availableTerms:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
     const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
     function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
     function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;saveAccountLocal('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
@@ -726,8 +726,12 @@
     }
 
     function pad(n){return String(n).padStart(2,'0')}
-    function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:Number(settings.totalWeeks||meta.totalWeeks||17),termStart:settings.termStart||meta.termStart||'',weekStartDay:Number(settings.weekStartDay||1)}; }
-    function totalWeeks(){ return Number(effectiveMeta().totalWeeks||17); }
+    function getActiveTerm(){ return state.activeTerm||null; }
+    function getActiveTermTotalWeeks(){ const value=Number(getActiveTerm()?.totalWeeks); return Number.isInteger(value)&&value>=1&&value<=60?value:20; }
+    function getActiveTermStart(){ return getActiveTerm()?.termStart||''; }
+    function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:getActiveTermTotalWeeks(),termStart:getActiveTermStart(),weekStartDay:Number(settings.weekStartDay||1)}; }
+    function totalWeeks(){ return getActiveTermTotalWeeks(); }
+    function clampPreviewWeek(){ if(state.previewWeek!==null) state.previewWeek=Math.max(1,Math.min(totalWeeks(),Number(state.previewWeek)||1)); }
     function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
     function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
     const DEFAULT_12_SLOTS=[
@@ -777,8 +781,8 @@
       toast(state.hideFifthSlot?'已隐藏第5节':'已显示第5节');
     }
     function timeToMin(t){const [h,m]=String(t||'00:00').split(':').map(Number); return h*60+m}
-    function getWeek(now=new Date()){const meta=effectiveMeta(); const start=new Date(`${meta.termStart||'2025-02-17'}T00:00:00`); const diff=Math.floor((now-start)/86400000); return Math.max(1,Math.min(Number(meta.totalWeeks||17),Math.floor(diff/7)+1));}
-    function getSelectedWeek(){return state.previewWeek||getWeek()}
+    function getWeek(now=new Date()){const meta=effectiveMeta(); if(!meta.termStart) return 1; const start=new Date(`${meta.termStart}T00:00:00`); if(Number.isNaN(start.getTime())) return 1; const diff=Math.floor((now-start)/86400000); return Math.max(1,Math.min(totalWeeks(),Math.floor(diff/7)+1));}
+    function getSelectedWeek(){return Math.max(1,Math.min(totalWeeks(),state.previewWeek||getWeek()))}
     function getDayIndex(now=new Date()){const d=now.getDay(); return d===0?7:d}
     function getSlot(num){return state.slots.find(s=>Number(s.slot)===Number(num))||{label:'',range:'',start:'00:00',end:'00:00'}}
     function activeInWeek(c,w){if(!c.weeks.includes(w)) return false; if(c.oddEven==='odd'&&w%2===0) return false; if(c.oddEven==='even'&&w%2===1) return false; return true}
@@ -953,7 +957,31 @@
       if(heightRange){ heightRange.oninput=()=>setTableRowHeight(heightRange.value,true); heightRange.onchange=()=>toast(`长度已调到 ${state.tableRowHeight}px`); }
       updateTableSizeTile();
     }
-      function renderHeader(){ const now=new Date(); $('#appTitle').textContent=APP_NAME; document.title=APP_NAME; $('#dateLine').textContent=''; $('#noticeLine').textContent=''; $('#ownerName').textContent=state.user?`${state.user.name} 的`:'我的'; if(!state.user){$('#statusPill').textContent='请先登录'; $('#nextName').textContent='每个同学都有自己的课表'; $('#nextMeta').textContent='登录后只看自己的数据，互不影响'; return;} const current=nowCourse(now), soon=soonCourse(now), next=nextCourse(now); if(current){$('#statusPill').textContent=`${state.user.name} 正在上课`; $('#nextName').textContent=current.name; $('#nextMeta').textContent=`${DAYS[current.day-1]} · ${getSlot(current.slot).label} · ${current.location}`;} else if(soon){$('#statusPill').textContent='即将上课'; $('#nextName').textContent=soon.name; $('#nextMeta').textContent=`${DAYS[soon.day-1]} · ${getSlot(soon.slot).range} · ${soon.location}`;} else if(next){$('#statusPill').textContent='课间休息'; $('#nextName').textContent=next.name; $('#nextMeta').textContent=`${DAYS[next.day-1]} · ${getSlot(next.slot).label} · ${next.location}`;} else {$('#statusPill').textContent='今日结束'; $('#nextName').textContent='今天没有下一节课'; $('#nextMeta').textContent='可以休息一下';} const w=getSelectedWeek(); const isCurrentWeek=w===getWeek(now); $('#weekTitle').textContent=`第 ${w} 周`; $('#weekBadge').textContent='本周'; $('#weekBadge').classList.toggle('week-current', isCurrentWeek); $('#parityBadge').textContent=w%2===0?'双周':'单周'; $('#termLine').textContent=''; }
+    async function switchActiveTerm(termKey){
+      if(!termKey||termKey===getActiveTerm()?.termKey) return;
+      const previousTermKey=getActiveTerm()?.termKey||'';
+      state.previewWeek=null;
+      state.courses=[];
+      renderAll();
+      try{
+        await api('/api/my/active-term',{method:'PUT',body:JSON.stringify({termKey})});
+        await loadMe();
+        toast(`已切换到 ${getActiveTerm()?.selectedTermLabel||'所选学期'}`);
+      }catch(e){
+        toast(e.message||'学期切换失败');
+        if(previousTermKey) await loadMe().catch(()=>{});
+      }
+    }
+    function renderTermSwitcher(){
+      const line=$('#termLine');
+      if(!line) return;
+      const terms=state.availableTerms||[];
+      if(!state.user||!terms.length){line.textContent='';return;}
+      line.innerHTML=`<select id="activeTermSelect" class="term-select" aria-label="当前学期">${terms.map(term=>`<option value="${escapeHtml(term.termKey)}" ${term.termKey===getActiveTerm()?.termKey?'selected':''}>${escapeHtml(term.selectedTermLabel||term.label||'历史课程')} · ${Number(term.totalWeeks||20)}周</option>`).join('')}</select>`;
+      const select=$('#activeTermSelect');
+      if(select) select.onchange=()=>switchActiveTerm(select.value);
+    }
+    function renderHeader(){ const now=new Date(); $('#appTitle').textContent=APP_NAME; document.title=APP_NAME; $('#dateLine').textContent=''; $('#noticeLine').textContent=''; $('#ownerName').textContent=state.user?`${state.user.name} 的`:'我的'; renderTermSwitcher(); if(!state.user){$('#statusPill').textContent='请先登录'; $('#nextName').textContent='每个同学都有自己的课表'; $('#nextMeta').textContent='登录后只看自己的数据，互不影响'; return;} const current=nowCourse(now), soon=soonCourse(now), next=nextCourse(now); if(current){$('#statusPill').textContent=`${state.user.name} 正在上课`; $('#nextName').textContent=current.name; $('#nextMeta').textContent=`${DAYS[current.day-1]} · ${getSlot(current.slot).label} · ${current.location}`;} else if(soon){$('#statusPill').textContent='即将上课'; $('#nextName').textContent=soon.name; $('#nextMeta').textContent=`${DAYS[soon.day-1]} · ${getSlot(soon.slot).range} · ${soon.location}`;} else if(next){$('#statusPill').textContent='课间休息'; $('#nextName').textContent=next.name; $('#nextMeta').textContent=`${DAYS[next.day-1]} · ${getSlot(next.slot).label} · ${next.location}`;} else {$('#statusPill').textContent='今日结束'; $('#nextName').textContent='今天没有下一节课'; $('#nextMeta').textContent='可以休息一下';} const w=getSelectedWeek(); const isCurrentWeek=w===getWeek(now); $('#weekTitle').textContent=`第 ${w} 周 · ${getActiveTerm()?.selectedTermLabel||'当前学期'}`; $('#weekBadge').textContent=`共${totalWeeks()}周`; $('#weekBadge').classList.toggle('week-current', isCurrentWeek); $('#parityBadge').textContent=w%2===0?'双周':'单周'; }
     function renderWeeks(){ $('#weekStrip').innerHTML=''; }
     function renderTable(){
       const now=new Date(), actualWeek=getWeek(now), week=getSelectedWeek(), today=getDayIndex(now);
@@ -1332,7 +1360,7 @@
     function mapSlot(value){ const raw = String(value||'').replace(/\s+/g,''); const nums = raw.match(/\d+/g); if(!nums) return Number(raw)||0; if(/1-2/.test(raw)) return 1; if(/3-4/.test(raw)) return 2; if(/6-7/.test(raw)) return 3; if(/8-9/.test(raw)) return 4; if(/10-11/.test(raw)) return 5; if(/12-13/.test(raw)) return 6; return Number(nums[0])||0; }
     function inferOddEven(weekText){ const t=String(weekText||''); if(t.includes('单')) return 'odd'; if(t.includes('双')) return 'even'; return 'all'; }
     function inferCategory(text){ const t=String(text||''); if(t.includes('实验')) return 'lab'; if(t.includes('思想')||t.includes('体育')||t.includes('英语')||t.includes('形势与政策')) return 'public_required'; if(t.includes('化学')||t.includes('俄语')||t.includes('监测')||t.includes('生物')) return 'major_required'; return 'custom'; }
-    function normalizeImported(rows){ return rows.map(r=>{ const weekText = pick(r,['weekText','周次','周数','周次说明','上课周次','周别']) || '1-17周'; return ({ day:mapDay(pick(r,['day','星期','周几','星期几','星期'])), slot:mapSlot(pick(r,['slot','节次','上课节次','节','节次范围','时间段'])), name:String(pick(r,['name','课程名','课程名称','课程'])||'').replace(/[☆★▲※]/g,'').trim(), shortName:pick(r,['shortName','简称','课程简称'])||'', teacher:pick(r,['teacher','老师','教师','任课教师'])||'', location:pick(r,['location','地点','场地','教室','上课地点','教室地点'])||'', classGroup:pick(r,['classGroup','班级','上课班级'])||'', weekText, oddEven:pick(r,['oddEven','单双周']) || inferOddEven(weekText), category:pick(r,['category','分类','课程类别']) || inferCategory(pick(r,['name','课程名','课程名称','课程'])) }); }).filter(r=>r.name&&r.day&&r.slot); }
+    function normalizeImported(rows){ return rows.map(r=>{ const weekText = pick(r,['weekText','周次','周数','周次说明','上课周次','周别']) || `1-${totalWeeks()}周`; return ({ day:mapDay(pick(r,['day','星期','周几','星期几','星期'])), slot:mapSlot(pick(r,['slot','节次','上课节次','节','节次范围','时间段'])), name:String(pick(r,['name','课程名','课程名称','课程'])||'').replace(/[☆★▲※]/g,'').trim(), shortName:pick(r,['shortName','简称','课程简称'])||'', teacher:pick(r,['teacher','老师','教师','任课教师'])||'', location:pick(r,['location','地点','场地','教室','上课地点','教室地点'])||'', classGroup:pick(r,['classGroup','班级','上课班级'])||'', weekText, oddEven:pick(r,['oddEven','单双周']) || inferOddEven(weekText), category:pick(r,['category','分类','课程类别']) || inferCategory(pick(r,['name','课程名','课程名称','课程'])) }); }).filter(r=>r.name&&r.day&&r.slot); }
     function isWeekdayLabel(v){ return /星期[一二三四五六日天]|周[一二三四五六日]/.test(String(v||'')); }
     function buildSheetMatrix(sheet){
       const ref = sheet['!ref']; if(!ref) return [];
@@ -1384,7 +1412,7 @@
         const m = joined.match(/(.+?)[☆★▲※]?\s+([^\s]+(?:\s+[^\s]+)?)\s+(\d+\s*-\s*\d+周(?:\(单\)|\(双\))?|\d+周)\s*$/);
         if(m){ name = m[1].trim(); const pair = splitTeacherLocation(m[2]); teacher = pair.teacher; location = pair.location; weekText = m[3].replace(/\s+/g,''); }
       }
-      if(!weekText) weekText='1-17周';
+      if(!weekText) weekText=`1-${totalWeeks()}周`;
       return {day,slot,name,teacher,location,weekText,oddEven:inferOddEven(weekText),category:inferCategory(name)};
     }
     function parseGridSheet(rows){
@@ -1421,7 +1449,10 @@
       if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
       state.meta=data.meta;
       state.slots=normalizeClientSlots(data.slots);
-      state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId);
+      state.activeTerm=data.activeTerm||null;
+      state.availableTerms=Array.isArray(data.availableTerms)?data.availableTerms:[];
+      state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId&&(!state.activeTerm||course.termKey===state.activeTerm.termKey));
+      clampPreviewWeek();
       if(previousAccountId&&previousAccountId!==state.accountId) latestAndroidImportCode='';
       applyAccountPreferences(data.preferences||{});
       renderAuthState(true);
@@ -1456,7 +1487,7 @@
       const overlay=$('#accountSwitchLoading');
       if(overlay?.dataset.version===String(version)) overlay.classList.add('hidden');
     }
-    function resetToLoggedOut(){ ++state.accountRequestVersion; state.user=null; state.accountId=''; state.courses=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); localStorage.removeItem('xiaodeCurrentAccountId'); renderAuthState(false); renderAll(); }
+    function resetToLoggedOut(){ ++state.accountRequestVersion; state.user=null; state.accountId=''; state.courses=[]; state.activeTerm=null; state.availableTerms=[]; state.previewWeek=null; state.editingCourse=null; state.switchKey=''; state.preferencesReady=false; localStorage.removeItem('xiaodeCurrentSwitchKey'); localStorage.removeItem('xiaodeCurrentAccountId'); renderAuthState(false); renderAll(); }
 
     $('#showRegisterAuth') && ($('#showRegisterAuth').onclick=showRegisterPanel);
     $('#accountAvatarBtn') && ($('#accountAvatarBtn').onclick=openAccountModal);
@@ -1902,11 +1933,11 @@
       const st=state.courseSettings||DEFAULT_COURSE_SETTINGS;
       openModal('课表设置', `
         <div class="form-grid">
-          <div class="row"><label>一共多少周</label><input id="settingTotalWeeks" type="number" min="1" max="40" value="${escapeHtml(st.totalWeeks||meta.totalWeeks||17)}" /></div>
+          <div class="row"><label>一共多少周</label><input id="settingTotalWeeks" type="number" min="1" max="60" value="${escapeHtml(getActiveTermTotalWeeks())}" /></div>
           <div class="row"><label>每周开始日</label><select id="settingWeekStartDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${Number(st.weekStartDay||1)===i+1?'selected':''}>${d}</option>`).join('')}</select></div>
-          <div class="row"><label>开学日期</label><input id="settingTermStart" type="date" value="${escapeHtml(st.termStart||meta.termStart||'')}" /></div>
+          <div class="row"><label>开学日期</label><input id="settingTermStart" type="date" value="${escapeHtml(getActiveTermStart())}" /></div>
         </div>
-        <div class="secondary-note">调整开学日期后，当前第几周会按新日期重新计算；这些设置保存在本机并进入备份文件。</div>
+        <div class="secondary-note">总周数和开学日期只保存到当前学期；切换学期后会立即使用该学期自己的范围。</div>
         <div class="style-switch-grid" style="margin-top:14px">
           <div class="style-row"><div>是否需要教室模块<small>关闭后课程格子和编辑界面不突出教室。</small></div><button class="btn ghost" id="settingShowLocation">${st.showLocation?'开启':'关闭'}</button></div>
           <div class="style-row"><div>是否需要教师模块<small>关闭后完整模式里不显示老师。</small></div><button class="btn ghost" id="settingShowTeacher">${st.showTeacher?'开启':'关闭'}</button></div>
@@ -1918,14 +1949,16 @@
       const temp={...st};
       const bindToggle=(id,key)=>{ const btn=$('#'+id); if(!btn) return; btn.onclick=()=>{ temp[key]=!temp[key]; btn.textContent=temp[key]?'开启':'关闭'; }; };
       bindToggle('settingShowLocation','showLocation'); bindToggle('settingShowTeacher','showTeacher'); bindToggle('settingShowClassGroup','showClassGroup'); bindToggle('settingCustomTime','customTime');
-      $('#saveScheduleSettingsBtn') && ($('#saveScheduleSettingsBtn').onclick=()=>{
-        saveCourseSettings({
-          ...temp,
-          totalWeeks: ($('#settingTotalWeeks')?.value||'').trim(),
-          weekStartDay: ($('#settingWeekStartDay')?.value||'1'),
-          termStart: ($('#settingTermStart')?.value||'').trim()
-        });
-        renderAll(); closeModal(); toast('课表设置已保存');
+      $('#saveScheduleSettingsBtn') && ($('#saveScheduleSettingsBtn').onclick=async()=>{
+        try{
+          const totalWeeksValue=Number($('#settingTotalWeeks')?.value||0);
+          const termStartValue=($('#settingTermStart')?.value||'').trim();
+          const result=await api('/api/my/active-term/settings',{method:'PUT',body:JSON.stringify({totalWeeks:totalWeeksValue,termStart:termStartValue})});
+          state.activeTerm=result.activeTerm||state.activeTerm;
+          state.availableTerms=(state.availableTerms||[]).map(term=>term.termKey===state.activeTerm?.termKey?state.activeTerm:term);
+          saveCourseSettings({...temp,totalWeeks:'',termStart:'',weekStartDay:($('#settingWeekStartDay')?.value||'1')});
+          clampPreviewWeek(); renderAll(); syncWidgetNow('term-settings'); closeModal(); toast('当前学期设置已保存');
+        }catch(e){toast(e.message||'学期设置保存失败');}
       });
     }
     function openTableStylePanel(){
@@ -2213,15 +2246,15 @@ $('#viewUsersBtn').onclick = openAdminUsers;
 $('#helpBtnMain').onclick = openHelpModal;
 $('#helpBtnAuth').onclick = openHelpModal;
     $('#prevWeek').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); };
-    $('#nextWeek').onclick=()=>{ state.previewWeek=Math.min(Number(state.meta.totalWeeks||17),getSelectedWeek()+1); renderAll(); };
+    $('#nextWeek').onclick=()=>{ state.previewWeek=Math.min(totalWeeks(),getSelectedWeek()+1); renderAll(); };
     $('#prevWeekInline') && ($('#prevWeekInline').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); });
     $('#thisWeekInline') && ($('#thisWeekInline').onclick=()=>{ state.previewWeek=null; renderAll(); toast('已回到本周'); });
-    $('#nextWeekInline') && ($('#nextWeekInline').onclick=()=>{ state.previewWeek=Math.min(Number(state.meta?.totalWeeks||17),getSelectedWeek()+1); renderAll(); });
+    $('#nextWeekInline') && ($('#nextWeekInline').onclick=()=>{ state.previewWeek=Math.min(totalWeeks(),getSelectedWeek()+1); renderAll(); });
     $$('.mode .btn').forEach(b=>b.onclick=()=>{ state.infoMode=b.dataset.mode; renderAll(); });
     $('#saveCourseBtn').onclick=async()=>{ try{ const payload={name:$('#courseName').value.trim(),shortName:$('#courseShortName').value.trim(),teacher:$('#courseTeacher').value.trim(),location:$('#courseLocation').value.trim(),classGroup:$('#courseClassGroup').value.trim(),day:Number($('#courseDay').value),slot:Number($('#courseSlot').value),weekText:$('#courseWeekText').value.trim(),oddEven:$('#courseOddEven').value,category:$('#courseCategory').value}; if(state.editingCourse){ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'PUT',body:JSON.stringify(payload)}); } else { await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)}); } await loadMe(); clearCourseForm(); toast('课程已保存到你的课表'); }catch(e){ toast(e.message); } };
     $('#resetCourseBtn').onclick=clearCourseForm;
     $('#deleteCourseBtn').onclick=async()=>{ if(!state.editingCourse) return; if(!confirm(`删除 ${state.editingCourse.name}？`)) return; try{ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'DELETE'}); await loadMe(); clearCourseForm(); toast('已从你的课表删除'); }catch(e){ toast(e.message); } };
-    $('#clearAllCoursesBtn').onclick=async()=>{ if(!confirm('确定清空当前账号的所有课程吗？此操作不可恢复。')) return; try{ const r=await api('/api/my/courses',{method:'DELETE'}); await loadMe(); clearCourseForm(); toast(`已清空 ${r.count||0} 门课程`); }catch(e){ toast(e.message); } };
+    $('#clearAllCoursesBtn').onclick=async()=>{ if(!confirm(`确定清空“${getActiveTerm()?.selectedTermLabel||'当前学期'}”的所有课程吗？其他学期不会受影响。`)) return; try{ const r=await api('/api/my/courses',{method:'DELETE'}); await loadMe(); clearCourseForm(); toast(`已清空当前学期 ${r.count||0} 门课程`); }catch(e){ toast(e.message); } };
     async function doImport(replace){ try{ let rows=[]; const text=$('#importText').value.trim(); if(text) rows=parseCsv(text); else if(window._importRows) rows=window._importRows; const courses=normalizeImported(rows); if(!courses.length) return toast('没有可导入的课程'); await api('/api/my/import',{method:'POST',body:JSON.stringify({courses,replace})}); await loadMe(); toast(`已${replace?'覆盖':'追加'}导入 ${courses.length} 条到你的课表，并已刷新显示`); }catch(e){ toast(e.message); } }
     $('#replaceImportBtn').onclick=()=>doImport(true); $('#appendImportBtn').onclick=()=>doImport(false);
 
@@ -2432,16 +2465,17 @@ $('#helpBtnAuth').onclick = openHelpModal;
       const current = state.user ? nowCourse(now) : null;
       const next = state.user ? nextCourse(now) : null;
       return {
-        version: 2,
+        version: 3,
         accountId: state.accountId,
+        activeTermKey: getActiveTerm()?.termKey||'',
         reason: 'web-sync',
         syncedAt: new Date().toISOString(),
         scheduleName: state.user ? (state.user.name || state.user.username || '我的课表') : '我的课表',
         user: state.user ? { name: state.user.name || '', username: state.user.username || '' } : null,
         meta: state.meta ? {
           campusName: state.meta.campusName || '',
-          termStart: state.meta.termStart || '',
-          totalWeeks: Number(state.meta.totalWeeks || 17),
+          termStart: getActiveTermStart(),
+          totalWeeks: getActiveTermTotalWeeks(),
           currentWeek: getWeek(now)
         } : {},
         slots: (state.slots || []).map(s => ({
@@ -2453,6 +2487,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
         })),
         courses: (state.courses || []).map(c => ({
           id: c.id || '',
+          termKey: c.termKey || '',
           name: c.name || '',
           teacher: c.teacher || '',
           location: c.location || '',
