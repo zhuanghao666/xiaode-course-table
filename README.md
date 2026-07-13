@@ -1,6 +1,6 @@
 # 小德课表
 
-小德课表包含 Web、Node.js/Express 后端和 Android WebView App。当前分支为 v40 教务导入诊断开发版；v39 的 JSON 主存储、MySQL 异步镜像与 accountId 隔离保持不变。
+小德课表包含 Web、Node.js/Express 后端和 Android WebView App。当前分支为 v41 学期隔离与动态周数开发版；v39 的 JSON 主存储、MySQL 异步镜像与 accountId 隔离保持不变。
 
 ## 目录结构
 
@@ -19,9 +19,9 @@ xiaode-course-table/
 
 ## 当前版本
 
-- 当前版本：v40-dev（未标记稳定发布）
-- Web 版本：`40.0.0-dev.0`
-- Android 版本：0.30.0-v40-term-params
+- 当前版本：v41-dev（未标记稳定发布）
+- Web 版本：`41.0.0-dev.0`
+- Android 版本：0.31.0-v41-term-isolation-weeks
 - 默认存储：`web/backend/data/db.json`
 - 可选模式：MySQL 异步镜像，使用 `XIAODE_STORAGE=mysql` 开启
 
@@ -103,7 +103,7 @@ npm test
 ```
 
 隔离设计与审计结果见 `docs/account-isolation.md`。
-教务导入链路见 `docs/import-pipeline.md`，诊断、故障排查与真机验收见 `docs/import-troubleshooting.md`。
+v41 学期模型、动态周数和历史脏数据处理见 `docs/term-isolation-v41.md`；教务导入链路见 `docs/import-pipeline.md`，诊断与故障排查见 `docs/import-troubleshooting.md`。
 
 ## db.json 默认模式
 
