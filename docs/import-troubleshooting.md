@@ -23,7 +23,9 @@ npm start
 
 ## reasonCode
 
-`MISSING_NAME`、`MISSING_DAY`、`INVALID_DAY`、`MISSING_SECTION`、`INVALID_SECTION`、`MISSING_WEEKS`、`INVALID_WEEKS`、`DUPLICATE_EXACT`、`MERGED_SAME_COURSE`、`CONFLICTING_SCHEDULE`、`UNSUPPORTED_STRUCTURE`、`ACCOUNT_MISMATCH`、`EXPIRED_IMPORT_CODE`、`USED_IMPORT_CODE`、`UNKNOWN`。
+`MISSING_NAME`、`MISSING_DAY`、`INVALID_DAY`、`MISSING_SECTION`、`INVALID_SECTION`、`MISSING_WEEKS`、`INVALID_WEEKS`、`DUPLICATE_EXACT`、`MERGED_SAME_COURSE`、`CONFLICTING_SCHEDULE`、`UNSUPPORTED_STRUCTURE`、`ACCOUNT_MISMATCH`、`EXPIRED_IMPORT_CODE`、`USED_IMPORT_CODE`、`MISSING_TERM_PARAMS`、`INVALID_TERM_PARAMS`、`TERM_RESPONSE_MISMATCH`、`UNKNOWN`。
+
+学期选择必须使用界面选项携带的原始 `xnm/xqm` value。Web、Android 和后端均不再回退到固定学期。trace 同时记录 `selectedTermLabel/requestedXnm/requestedXqm/effectiveXnm/effectiveXqm`；只要教务课程响应中的学期与请求不一致，本次导入就会在 `writeDb()` 前终止。
 
 失败响应包含明确 HTTP 状态码、`traceId`、`reasonCode` 和可读消息，不返回敏感原始数据。
 
@@ -55,4 +57,3 @@ cd C:\work3\xiaode-course-table\android
 3. 导入期间将 App 退到后台并重建 Activity，确认冻结的 server/accountId/importCode/学期不丢失。
 4. 验证导入码过期、已使用与账号不匹配的明确错误。
 5. 使用实际教务样本核对首次读取、刷新后读取、调课、单双周和不连续周次。
-

@@ -21,7 +21,7 @@ xiaode-course-table/
 
 - 当前版本：v40-dev（未标记稳定发布）
 - Web 版本：`40.0.0-dev.0`
-- Android 版本：0.29.0-v40-import-diagnostics
+- Android 版本：0.30.0-v40-term-params
 - 默认存储：`web/backend/data/db.json`
 - 可选模式：MySQL 异步镜像，使用 `XIAODE_STORAGE=mysql` 开启
 
