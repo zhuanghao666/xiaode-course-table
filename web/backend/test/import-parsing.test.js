@@ -71,6 +71,7 @@ test('fixtures expose candidate counts, filtering, merging, conflicts and field 
   const context = { accountId: 'account-a', userId: 'user-a', xnm: '2026', xqm: '12', traceId: 'trace-test' };
   const standard = analyzeJwxtImport(fixture('standard-kblist'), context);
   assert.deepEqual(standard.summary, { received: 3, recognized: 3, accepted: 5, filtered: 0, merged: 0, written: 5, beforeCount: 0, afterCount: 0 });
+  assert.deepEqual(standard.responseTerms, [{ xnm: '2026', xqm: '12', count: 3 }]);
   assert.ok(standard.courses.every((course) => course.accountId === 'account-a' && course.source === 'jwxt'));
   assert.equal(standard.courses.find((course) => course.name === '大学物理').oddEven, 'odd');
 
@@ -102,6 +103,8 @@ test('fixtures expose candidate counts, filtering, merging, conflicts and field 
     IMPORT_REASON_CODES.INVALID_WEEKS,
     IMPORT_REASON_CODES.INVALID_SECTION
   ]) assert.ok(reasons.has(reason), reason);
+  const invalidSection = invalid.candidates.find((candidate) => candidate.reasonCode === IMPORT_REASON_CODES.INVALID_SECTION);
+  assert.deepEqual(invalidSection.safeSectionFields, { jcor: '1-2,3-4' });
 
   assert.equal(analyzeJwxtImport(fixture('empty-response'), context).summary.received, 0);
   assert.equal(analyzeJwxtImport(fixture('html-wrapped'), context).summary.written, 1);

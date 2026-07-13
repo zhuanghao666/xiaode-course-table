@@ -9,10 +9,11 @@ test('diagnostics disabled keeps memory summary and creates no files', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaode-diag-off-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = createImportDiagnosticsStore({ enabled: false, dataFile: path.join(root, 'db.json') });
-  const trace = store.begin({ accountId: 'account-a', replace: true, xnm: '2026', xqm: '12' });
+  const trace = store.begin({ accountId: 'account-a', replace: true, selectedTermLabel: '2026-2027 第二学期', xnm: '2026', xqm: '12' });
   store.finish(trace, { status: 'success', summary: { written: 2 }, message: 'ok' });
   assert.equal(store.status().enabled, false);
   assert.equal(store.latestForAccount('account-a').summary.written, 2);
+  assert.equal(store.latestForAccount('account-a').selectedTermLabel, '2026-2027 第二学期');
   assert.equal(fs.existsSync(path.join(root, 'import-diagnostics')), false);
 });
 
@@ -22,7 +23,7 @@ test('diagnostics enabled writes redacted atomic traces and enforces retention',
   const directory = path.join(root, 'import-diagnostics');
   const store = createImportDiagnosticsStore({ enabled: true, keep: 2, dataFile: path.join(root, 'db.json'), directory });
   for (let index = 0; index < 3; index += 1) {
-    const trace = store.begin({ accountId: 'account-a', replace: true, xnm: '2026', xqm: '12' });
+    const trace = store.begin({ accountId: 'account-a', replace: true, selectedTermLabel: '2026-2027 第二学期', xnm: '2026', xqm: '12' });
     store.finish(trace, {
       status: 'success',
       summary: { written: index },
@@ -43,4 +44,3 @@ test('diagnostics enabled writes redacted atomic traces and enforces retention',
   assert.equal(store.list().length, 3);
   assert.equal(store.status().diskCount, 2);
 });
-
