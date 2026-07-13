@@ -10,6 +10,7 @@ internal data class ImportTaskContext(
     val serverBaseUrl: String,
     val importCode: String,
     val accountId: String,
+    val selectedTermLabel: String,
     val xnm: String,
     val xqm: String,
     val replace: Boolean,
@@ -19,8 +20,36 @@ internal data class ImportTaskContext(
         require(serverBaseUrl.isNotBlank()) { "serverBaseUrl is required" }
         require(importCode.length >= 6) { "importCode is invalid" }
         require(accountId.isNotBlank()) { "accountId is required" }
+        require(selectedTermLabel.isNotBlank()) { "selectedTermLabel is required" }
         require(xnm.isNotBlank()) { "xnm is required" }
         require(xqm.isNotBlank()) { "xqm is required" }
     }
-}
 
+    fun persistedFields(): Map<String, String> = mapOf(
+        "serverBaseUrl" to serverBaseUrl,
+        "importCode" to importCode,
+        "accountId" to accountId,
+        "selectedTermLabel" to selectedTermLabel,
+        "xnm" to xnm,
+        "xqm" to xqm
+    )
+
+    companion object {
+        fun restore(fields: Map<String, String>, replace: Boolean, createdAt: Long): ImportTaskContext? {
+            return try {
+                ImportTaskContext(
+                    serverBaseUrl = fields["serverBaseUrl"].orEmpty(),
+                    importCode = fields["importCode"].orEmpty(),
+                    accountId = fields["accountId"].orEmpty(),
+                    selectedTermLabel = fields["selectedTermLabel"].orEmpty(),
+                    xnm = fields["xnm"].orEmpty(),
+                    xqm = fields["xqm"].orEmpty(),
+                    replace = replace,
+                    createdAt = createdAt
+                )
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+    }
+}

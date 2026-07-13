@@ -15,6 +15,9 @@ export const IMPORT_REASON_CODES = Object.freeze({
   ACCOUNT_MISMATCH: 'ACCOUNT_MISMATCH',
   EXPIRED_IMPORT_CODE: 'EXPIRED_IMPORT_CODE',
   USED_IMPORT_CODE: 'USED_IMPORT_CODE',
+  MISSING_TERM_PARAMS: 'MISSING_TERM_PARAMS',
+  INVALID_TERM_PARAMS: 'INVALID_TERM_PARAMS',
+  TERM_RESPONSE_MISMATCH: 'TERM_RESPONSE_MISMATCH',
   UNKNOWN: 'UNKNOWN'
 });
 
@@ -419,6 +422,16 @@ function candidateFieldNames(item) {
     .sort();
 }
 
+function safeFailedSectionFields(item = {}) {
+  const out = {};
+  for (const key of ['jc', 'jcor', 'jcs', 'oldjc']) {
+    if (item[key] === undefined || item[key] === null) continue;
+    const value = normalizeText(item[key]).slice(0, 120);
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
 function rejection(diag, reasonCode, humanReadableReason) {
   diag.result = reasonCode === IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE ? 'rejected' : 'filtered';
   diag.reasonCode = reasonCode;
@@ -438,6 +451,8 @@ export function analyzeJwxtImport(data, context = {}) {
   const errors = [];
   let recognized = 0;
   let filtered = 0;
+  const responseTermCounts = new Map();
+  let incompleteResponseTermCount = 0;
 
   collected.candidates.forEach(({ item, source, sourceIndex }, index) => {
     const candidateId = `candidate-${index + 1}`;
@@ -451,6 +466,14 @@ export function analyzeJwxtImport(data, context = {}) {
     const dayResult = parseDayDetailed(item);
     const sectionResult = parseSectionsDetailed(item);
     const weekResult = parseWeeksDetailed(explicitWeeks, weekText, { maxWeeks: context.maxWeeks || 30 });
+    const responseXnm = normalizeText(item.xnm || item.XNM || '');
+    const responseXqm = normalizeText(item.xqm || item.XQM || '');
+    if (responseXnm && responseXqm) {
+      const key = `${responseXnm}\u0000${responseXqm}`;
+      responseTermCounts.set(key, (responseTermCounts.get(key) || 0) + 1);
+    } else if (responseXnm || responseXqm) {
+      incompleteResponseTermCount += 1;
+    }
     const diag = {
       candidateId,
       source,
@@ -467,6 +490,8 @@ export function analyzeJwxtImport(data, context = {}) {
       teacher,
       location,
       classGroup,
+      responseXnm,
+      responseXqm,
       result: 'accepted',
       reasonCode: null,
       humanReadableReason: '',
@@ -480,6 +505,7 @@ export function analyzeJwxtImport(data, context = {}) {
 
     for (const warning of weekResult.warnings) warnings.push({ ...warning, candidateId });
     if (diag.result !== 'accepted') {
+      diag.safeSectionFields = safeFailedSectionFields(item);
       filtered += 1;
       errors.push({ reasonCode: diag.reasonCode, message: diag.humanReadableReason, candidateId });
       diagnostics.push(diag);
@@ -511,8 +537,8 @@ export function analyzeJwxtImport(data, context = {}) {
         sourceDetail: source,
         sourceIndex,
         termKey: `${context.xnm || ''}:${context.xqm || ''}`,
-        xnm: String(context.xnm || ''),
-        xqm: String(context.xqm || ''),
+        xnm: responseXnm || String(context.xnm || ''),
+        xqm: responseXqm || String(context.xqm || ''),
         isAdjusted: adjusted,
         importTraceId: context.traceId || '',
         _candidateId: candidateId
@@ -562,6 +588,10 @@ export function analyzeJwxtImport(data, context = {}) {
     beforeCount: 0,
     afterCount: 0
   };
+  const responseTerms = [...responseTermCounts.entries()].map(([key, count]) => {
+    const [xnm, xqm] = key.split('\u0000');
+    return { xnm, xqm, count };
+  });
   return {
     rawResponseType: collected.rawResponseType,
     candidateSources: Object.keys(collected.sourceCounts),
@@ -572,6 +602,8 @@ export function analyzeJwxtImport(data, context = {}) {
     summary,
     warnings,
     errors,
+    responseTerms,
+    incompleteResponseTermCount,
     timings: {
       collectionMs,
       parsingMs,

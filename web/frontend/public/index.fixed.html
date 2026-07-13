@@ -588,8 +588,8 @@
             <h3 style="margin-top:18px">教务系统导入</h3>
             <div class="form-grid">
               <div class="row"><label>服务器地址</label><input id="appServerUrl" readonly /></div>
-              <div class="row"><label>学年 xnm</label><input id="jwxtXnm" value="2025" placeholder="例如：2025" /></div>
-              <div class="row"><label>学期 xqm</label><input id="jwxtXqm" value="12" placeholder="第二学期通常是 12" /></div>
+              <div class="row"><label>教务学年</label><select id="jwxtXnm"><option value="">请选择学年</option></select></div>
+              <div class="row"><label>教务学期</label><select id="jwxtXqm"><option value="">请选择学期</option><option value="3">第一学期</option><option value="12">第二学期</option></select></div>
             </div>
             <div class="inline">
               <button class="btn primary" id="createImportCodeBtn">开始教务导入</button>
@@ -1669,20 +1669,25 @@
     }
     async function openQuickJwxtImport(){
       syncAndroidImportUi();
-      if(hasAndroidBridge()){
-        await createAndroidImportCode();
-        return;
-      }
-      openModal('教务系统导入', `
-        <div class="quick-grid">
-          <button class="feature-tile primary-tile" id="quickCreateImportBtn"><span>⇩</span><b>生成导入码</b></button>
-          <button class="feature-tile" id="quickCopyServerBtn"><span>⧉</span><b>复制服务器</b></button>
+      populateJwxtYearOptions();
+      openModal('选择教务学期', `
+        <div class="form-grid">
+          <div class="row"><label>教务学年</label><select id="quickJwxtXnm">${$('#jwxtXnm')?.innerHTML||''}</select></div>
+          <div class="row"><label>教务学期</label><select id="quickJwxtXqm">${$('#jwxtXqm')?.innerHTML||''}</select></div>
         </div>
-        <div class="detail" style="margin-top:12px">手机 App 内会直接切到网页登录导入；网页端可以生成导入码并复制服务器地址。</div>
+        <div class="inline">
+          <button class="btn primary" id="quickCreateImportBtn">${hasAndroidBridge()?'进入教务网页登录':'生成导入码'}</button>
+          <button class="btn ghost" id="quickCopyServerBtn">复制服务器</button>
+        </div>
+        <div class="detail" style="margin-top:12px">学期参数直接使用教务选项的原始 value；未明确选择时不会生成导入码。</div>
       `);
       $('#quickCreateImportBtn') && ($('#quickCreateImportBtn').onclick=async()=>{
+        const quickYear=$('#quickJwxtXnm');
+        const quickSemester=$('#quickJwxtXqm');
+        if($('#jwxtXnm')) $('#jwxtXnm').value=quickYear?.value||'';
+        if($('#jwxtXqm')) $('#jwxtXqm').value=quickSemester?.value||'';
         await createAndroidImportCode();
-        if(latestAndroidImportCode){
+        if(latestAndroidImportCode && !hasAndroidBridge()){
           $('#modalBody').innerHTML=`<div class="detail" style="font-size:30px;font-weight:900;text-align:center;letter-spacing:3px">${escapeHtml(latestAndroidImportCode)}</div><div class="inline"><button class="btn primary" id="quickCopyImportCodeBtn">复制导入码</button></div>`;
           $('#quickCopyImportCodeBtn') && ($('#quickCopyImportCodeBtn').onclick=copyImportCode);
         }
@@ -2302,11 +2307,35 @@ $('#helpBtnAuth').onclick = openHelpModal;
       const value=location.origin;
       await copyText(value, '服务器地址已复制，可以粘贴到 Android 导入助手', '#appServerUrl');
     }
+    function populateJwxtYearOptions(){
+      const select=$('#jwxtXnm');
+      if(!select || select.options.length>1) return;
+      const now=new Date();
+      const currentStart=now.getMonth()>=6?now.getFullYear():now.getFullYear()-1;
+      for(let start=currentStart+1;start>=currentStart-6;start--){
+        const option=document.createElement('option');
+        option.value=String(start);
+        option.textContent=`${start}-${start+1}`;
+        select.appendChild(option);
+      }
+    }
+    function selectedJwxtTerm(){
+      const yearSelect=$('#jwxtXnm');
+      const semesterSelect=$('#jwxtXqm');
+      const xnm=yearSelect?.value?.trim()||'';
+      const xqm=semesterSelect?.value?.trim()||'';
+      const yearLabel=yearSelect?.selectedOptions?.[0]?.textContent?.trim()||'';
+      const semesterLabel=semesterSelect?.selectedOptions?.[0]?.textContent?.trim()||'';
+      if(!xnm || !xqm) throw new Error('请先明确选择教务学年和学期');
+      // xqm 始终直接取教务选项的原始 value，不根据“第一/第二学期”文字推断。
+      return {xnm,xqm,selectedTermLabel:`${yearLabel} ${semesterLabel}`.trim()};
+    }
+    populateJwxtYearOptions();
     async function createAndroidImportCode(){
       try{
-        const xnm=$('#jwxtXnm')?.value.trim()||'2025';
-        const xqm=$('#jwxtXqm')?.value.trim()||'12';
-        const r=await api('/api/my/import-code',{method:'POST',body:JSON.stringify({replace:jwxtReplaceMode,xnm,xqm})});
+        const {xnm,xqm,selectedTermLabel}=selectedJwxtTerm();
+        const r=await api('/api/my/import-code',{method:'POST',body:JSON.stringify({replace:jwxtReplaceMode,xnm,xqm,selectedTermLabel})});
+        if(r.xnm!==xnm || r.xqm!==xqm || r.selectedTermLabel!==selectedTermLabel) throw new Error('服务器返回的导入学期与当前选择不一致');
         latestAndroidImportCode=r.code;
         $('#androidImportCodeBox')?.classList.remove('hidden');
         const codeInput=$('#androidImportCode');
@@ -2324,13 +2353,14 @@ $('#helpBtnAuth').onclick = openHelpModal;
         }
         if(metaInput){
           const expire = r.expiresAt ? new Date(r.expiresAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '10 分钟内';
-          metaInput.value=`${expire} 前有效；${r.replace?'覆盖导入':'追加导入'}；xnm=${r.xnm}，xqm=${r.xqm}`;
+          metaInput.value=`${expire} 前有效；${r.replace?'覆盖导入':'追加导入'}；${r.selectedTermLabel}（xnm=${r.xnm}，xqm=${r.xqm}）`;
         }
         const payload={
           code:r.code,
           accountId:r.accountId||state.accountId,
-          xnm:r.xnm || xnm,
-          xqm:r.xqm || xqm,
+          selectedTermLabel:r.selectedTermLabel,
+          xnm:r.xnm,
+          xqm:r.xqm,
           replace:!!r.replace,
           expiresAt:r.expiresAt || '',
           serverUrl:location.origin
@@ -2338,6 +2368,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
         if(startAndroidNativeImport(payload)){
           const box=$('#androidImportCodeBox');
           if(box) box.classList.add('hidden');
+          closeModal();
           toast('导入码已生成，正在进入 App 内教务系统导入页…');
           return;
         }
@@ -2352,8 +2383,9 @@ $('#helpBtnAuth').onclick = openHelpModal;
       await copyText(value, '导入码已复制，可以粘贴到 Android 导入助手', '#androidImportCode');
     }
     function openAndroidImportGuide(){
-      const xnm=$('#jwxtXnm')?.value.trim()||'2025';
-      const xqm=$('#jwxtXqm')?.value.trim()||'12';
+      let term;
+      try{ term=selectedJwxtTerm(); }catch(e){ toast(e.message); return; }
+      const {xnm,xqm,selectedTermLabel}=term;
       openModal('Android 教务导入流程', `
         <div class="detail" style="margin-bottom:12px">
           <div style="font-weight:900;font-size:18px;margin-bottom:6px">核心原则</div>
@@ -2363,7 +2395,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
         <div class="detail" style="margin-bottom:12px">
           <div style="font-weight:900;font-size:18px;margin-bottom:6px">当前配置</div>
           <div>服务器地址：<b>${escapeHtml(location.origin)}</b></div>
-          <div>学年 xnm：<b>${escapeHtml(xnm)}</b>；学期 xqm：<b>${escapeHtml(xqm)}</b></div>
+          <div>本次请求：<b>${escapeHtml(selectedTermLabel)}</b>（xnm=${escapeHtml(xnm)}，xqm=${escapeHtml(xqm)}）</div>
           <div>导入模式：<b>${jwxtReplaceMode?'覆盖原课表':'追加到原课表'}</b></div>
         </div>
         <div class="detail">

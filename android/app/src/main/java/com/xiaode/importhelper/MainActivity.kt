@@ -85,6 +85,7 @@ class MainActivity : Activity() {
         const val STATE_IMPORT_CODE = "state_import_code"
         const val STATE_IMPORT_ACCOUNT = "state_import_account"
         const val STATE_IMPORT_SERVER = "state_import_server"
+        const val STATE_IMPORT_TERM_LABEL = "state_import_term_label"
         const val STATE_IMPORT_XNM = "state_import_xnm"
         const val STATE_IMPORT_XQM = "state_import_xqm"
         const val STATE_IMPORT_REPLACE = "state_import_replace"
@@ -107,7 +108,9 @@ class MainActivity : Activity() {
         val recognizedCount: Int,
         val filteredCount: Int,
         val mergedCount: Int,
-        val afterCount: Int
+        val afterCount: Int,
+        val requestedTermLabel: String,
+        val effectiveTermLabel: String
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -133,8 +136,7 @@ class MainActivity : Activity() {
     private lateinit var importMoreButton: Button
     private lateinit var closeImportButton: Button
     private lateinit var importSettingsPanel: LinearLayout
-    private lateinit var xnmInput: EditText
-    private lateinit var xqmInput: EditText
+    private lateinit var selectedTermText: TextView
     private lateinit var replaceCheck: CheckBox
     private lateinit var checkJwxtButton: Button
     private lateinit var clearCookieButton: Button
@@ -165,11 +167,13 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         activeImportContext?.let { context ->
-            outState.putString(STATE_IMPORT_CODE, context.importCode)
-            outState.putString(STATE_IMPORT_ACCOUNT, context.accountId)
-            outState.putString(STATE_IMPORT_SERVER, context.serverBaseUrl)
-            outState.putString(STATE_IMPORT_XNM, context.xnm)
-            outState.putString(STATE_IMPORT_XQM, context.xqm)
+            val fields = context.persistedFields()
+            outState.putString(STATE_IMPORT_CODE, fields["importCode"])
+            outState.putString(STATE_IMPORT_ACCOUNT, fields["accountId"])
+            outState.putString(STATE_IMPORT_SERVER, fields["serverBaseUrl"])
+            outState.putString(STATE_IMPORT_TERM_LABEL, fields["selectedTermLabel"])
+            outState.putString(STATE_IMPORT_XNM, fields["xnm"])
+            outState.putString(STATE_IMPORT_XQM, fields["xqm"])
             outState.putBoolean(STATE_IMPORT_REPLACE, context.replace)
             outState.putLong(STATE_IMPORT_CREATED_AT, context.createdAt)
             outState.putBoolean(STATE_IMPORT_MODE, inImportMode)
@@ -179,21 +183,20 @@ class MainActivity : Activity() {
 
     private fun restoreImportContext(savedState: Bundle?) {
         if (savedState == null) return
-        val code = savedState.getString(STATE_IMPORT_CODE, "").trim().uppercase()
-        val accountId = savedState.getString(STATE_IMPORT_ACCOUNT, "").trim()
-        val frozenServer = normalizeServerUrl(savedState.getString(STATE_IMPORT_SERVER, ""))
-        if (code.length < 6 || accountId.isBlank() || frozenServer.isBlank()) return
-        activeImportContext = ImportTaskContext(
-            serverBaseUrl = frozenServer,
-            importCode = code,
-            accountId = accountId,
-            xnm = savedState.getString(STATE_IMPORT_XNM, "2025"),
-            xqm = savedState.getString(STATE_IMPORT_XQM, "12"),
+        val fields = mapOf(
+            "serverBaseUrl" to normalizeServerUrl(savedState.getString(STATE_IMPORT_SERVER, "")),
+            "importCode" to savedState.getString(STATE_IMPORT_CODE, "").trim().uppercase(),
+            "accountId" to savedState.getString(STATE_IMPORT_ACCOUNT, "").trim(),
+            "selectedTermLabel" to savedState.getString(STATE_IMPORT_TERM_LABEL, "").trim(),
+            "xnm" to savedState.getString(STATE_IMPORT_XNM, "").trim(),
+            "xqm" to savedState.getString(STATE_IMPORT_XQM, "").trim()
+        )
+        activeImportContext = ImportTaskContext.restore(
+            fields,
             replace = savedState.getBoolean(STATE_IMPORT_REPLACE, true),
             createdAt = savedState.getLong(STATE_IMPORT_CREATED_AT, System.currentTimeMillis())
-        )
-        xnmInput.setText(activeImportContext?.xnm)
-        xqmInput.setText(activeImportContext?.xqm)
+        ) ?: return
+        showFrozenTerm(activeImportContext)
         replaceCheck.isChecked = activeImportContext?.replace ?: true
         if (savedState.getBoolean(STATE_IMPORT_MODE, false)) {
             reloadJwxt()
@@ -314,22 +317,21 @@ class MainActivity : Activity() {
             setPadding(0, dp(6), 0, dp(6))
             setBackgroundColor(Color.rgb(250, 250, 250))
         }
-        val termRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        selectedTermText = TextView(this).apply {
+            text = "学期由课表页明确选择后冻结"
+            textSize = 14f
+            setTextColor(Color.rgb(70, 70, 70))
+            setPadding(dp(10), dp(8), dp(10), dp(8))
         }
-        xnmInput = edit("学年 xnm", InputType.TYPE_CLASS_NUMBER).apply { setText("2025") }
-        xqmInput = edit("学期 xqm", InputType.TYPE_CLASS_NUMBER).apply { setText("12") }
-        termRow.addView(xnmInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        termRow.addView(xqmInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         replaceCheck = CheckBox(this).apply {
             text = "覆盖当前账号原课表"
             textSize = 14f
             isChecked = true
+            isEnabled = false
         }
         checkJwxtButton = button("检查教务登录状态")
         clearCookieButton = button("清除教务 Cookie")
-        importSettingsPanel.addView(termRow)
+        importSettingsPanel.addView(selectedTermText)
         importSettingsPanel.addView(replaceCheck)
         importSettingsPanel.addView(checkJwxtButton, fullWidthParams())
         importSettingsPanel.addView(clearCookieButton, fullWidthParams())
@@ -462,6 +464,9 @@ class MainActivity : Activity() {
                     val json = JSONObject(payload)
                     val code = json.optString("code", "").trim().uppercase()
                     val accountId = json.optString("accountId", "").trim()
+                    val selectedTermLabel = json.optString("selectedTermLabel", "").trim()
+                    val xnm = json.optString("xnm", "").trim()
+                    val xqm = json.optString("xqm", "").trim()
                     val bridgeServer = normalizeServerUrl(json.optString("serverUrl", serverUrl))
                     if (code.length < 6) {
                         setStatus("网页传来的导入码无效，请在网页端重新生成。")
@@ -475,18 +480,22 @@ class MainActivity : Activity() {
                         setStatus("网页没有传来服务器地址，请先在 App 顶部打开小德课表服务器。")
                         return@post
                     }
+                    if (selectedTermLabel.isBlank() || xnm.isBlank() || xqm.isBlank()) {
+                        setStatus("网页没有传来明确的教务学期，请返回课表页重新选择学年和学期。")
+                        return@post
+                    }
                     serverUrl = bridgeServer
                     activeImportContext = ImportTaskContext(
                         serverBaseUrl = bridgeServer,
                         importCode = code,
                         accountId = accountId,
-                        xnm = json.optString("xnm", "2025"),
-                        xqm = json.optString("xqm", "12"),
+                        selectedTermLabel = selectedTermLabel,
+                        xnm = xnm,
+                        xqm = xqm,
                         replace = json.optBoolean("replace", true),
                         createdAt = System.currentTimeMillis()
                     )
-                    xnmInput.setText(activeImportContext?.xnm)
-                    xqmInput.setText(activeImportContext?.xqm)
+                    showFrozenTerm(activeImportContext)
                     replaceCheck.isChecked = activeImportContext?.replace ?: true
                     serverInput.setText(serverUrl)
                     saveServer()
@@ -912,6 +921,15 @@ class MainActivity : Activity() {
         importWebView.loadUrl(JWXT_BASE)
     }
 
+    private fun showFrozenTerm(context: ImportTaskContext?) {
+        if (!::selectedTermText.isInitialized) return
+        selectedTermText.text = if (context == null) {
+            "学期由课表页明确选择后冻结"
+        } else {
+            "本次请求：${context.selectedTermLabel}（xnm=${context.xnm}，xqm=${context.xqm}）"
+        }
+    }
+
     private fun fetchAndUploadSchedule() {
         // 整个异步任务只使用开始时冻结的上下文，不再读取全局当前账号或可编辑输入框。
         val context = activeImportContext
@@ -945,6 +963,9 @@ class MainActivity : Activity() {
             val body = JSONObject()
                 .put("jwxtData", raw)
                 .put("accountId", accountIdForImport)
+                .put("selectedTermLabel", context.selectedTermLabel)
+                .put("xnm", context.xnm)
+                .put("xqm", context.xqm)
             val upload = postJson("$cleanServer/api/import-code/$codeForImport/submit", body)
             if (!upload.optBoolean("ok")) throw IOException(upload.optString("message", "上传失败"))
             val resultSummary = upload.optJSONObject("summary") ?: JSONObject()
@@ -953,6 +974,8 @@ class MainActivity : Activity() {
             val convertedCount = resultSummary.optInt("accepted", upload.optInt("convertedCount", saved))
             val previousCount = upload.optInt("previousCount", -1)
             val serverMessage = upload.optString("message", "")
+            val requestedTerm = upload.optJSONObject("requestedTerm") ?: JSONObject()
+            val effectiveTerm = upload.optJSONObject("effectiveTerm") ?: JSONObject()
             ImportSummary(
                 message = if (serverMessage.isNotBlank()) serverMessage else "读取 $rawCount 条原始课表记录，已保存 $saved 条课程。",
                 savedCount = saved,
@@ -966,7 +989,9 @@ class MainActivity : Activity() {
                 recognizedCount = resultSummary.optInt("recognized", convertedCount),
                 filteredCount = resultSummary.optInt("filtered", 0),
                 mergedCount = resultSummary.optInt("merged", 0),
-                afterCount = resultSummary.optInt("afterCount", upload.optInt("afterCount", saved))
+                afterCount = resultSummary.optInt("afterCount", upload.optInt("afterCount", saved)),
+                requestedTermLabel = requestedTerm.optString("label", context.selectedTermLabel),
+                effectiveTermLabel = effectiveTerm.optString("label", "")
             )
         }) { summary ->
             serverUrl = cleanServer
@@ -991,6 +1016,8 @@ class MainActivity : Activity() {
             .put("replace", summary.replace)
             .put("importedAt", summary.importedAt)
             .put("message", summary.message)
+            .put("requestedTerm", summary.requestedTermLabel)
+            .put("effectiveTerm", summary.effectiveTermLabel)
             .put("summary", JSONObject()
                 .put("received", summary.rawCount)
                 .put("recognized", summary.recognizedCount)
@@ -1029,6 +1056,8 @@ class MainActivity : Activity() {
     private fun showImportSuccessDialog(summary: ImportSummary) {
         val lines = buildString {
             appendLine("导入成功")
+            appendLine("本次请求：${summary.requestedTermLabel}")
+            appendLine("实际返回：${summary.effectiveTermLabel.ifBlank { "教务响应未提供学期字段" }}")
             appendLine("原始课表记录：${summary.rawCount} 条")
             appendLine("成功识别候选：${summary.recognizedCount} 条")
             appendLine("写入小德课表：${summary.savedCount} 条")
@@ -1073,8 +1102,13 @@ class MainActivity : Activity() {
             setStatus("未检测到教务系统 Cookie。请先在教务网页登录；若已登录，点一次教务首页或刷新。")
             return
         }
-        val xnm = xnmInput.text.toString().trim().ifBlank { "2025" }
-        val xqm = xqmInput.text.toString().trim().ifBlank { "12" }
+        val context = activeImportContext
+        if (context == null) {
+            setStatus("缺少冻结的导入学期，请返回课表页重新选择。")
+            return
+        }
+        val xnm = context.xnm
+        val xqm = context.xqm
         runAsync("正在检查教务课表接口……", {
             val raw = fetchJwxtSchedule(cookie, xnm, xqm)
             val kbList = raw.optJSONArray("kbList") ?: JSONArray()
@@ -1322,6 +1356,7 @@ class MainActivity : Activity() {
     private fun exitImportScreen(message: String) {
         inImportMode = false
         activeImportContext = null
+        showFrozenTerm(null)
         try {
             if (::importWebView.isInitialized) {
                 importWebView.stopLoading()
@@ -1391,14 +1426,15 @@ class MainActivity : Activity() {
     }
 
     private fun buildDiagnosticText(currentStatus: String): String = buildString {
-        appendLine("小德课表 App v29 · Web v40 导入诊断开发版")
+        appendLine("小德课表 App v30 · Web v40 学期参数修复版")
         appendLine("serverUrl=${serverUrl.ifBlank { serverInput.text?.toString() ?: "" }}")
         appendLine("appUrl=${if (::appWebView.isInitialized) appWebView.url else ""}")
         appendLine("importMode=$inImportMode")
         appendLine("hasImportCode=${activeImportContext?.importCode?.isNotBlank() == true}")
         appendLine("hasImportAccount=${activeImportContext?.accountId?.isNotBlank() == true}")
-        appendLine("xnm=${if (::xnmInput.isInitialized) xnmInput.text else ""}")
-        appendLine("xqm=${if (::xqmInput.isInitialized) xqmInput.text else ""}")
+        appendLine("selectedTermLabel=${activeImportContext?.selectedTermLabel ?: ""}")
+        appendLine("xnm=${activeImportContext?.xnm ?: ""}")
+        appendLine("xqm=${activeImportContext?.xqm ?: ""}")
         appendLine("jwxtCookieLength=${try { collectJwxtCookies().length } catch (_: Throwable) { -1 }}")
         appendLine("status=$currentStatus")
         appendLine("android=${Build.VERSION.SDK_INT}")

@@ -556,8 +556,9 @@ async function fetchJwxtScheduleByPuppeteer({ username, password, xnm, xqm }) {
     const data = await page.evaluate(
       async ({ schedulePath, xnm, xqm }) => {
         const body = new URLSearchParams();
-        body.set('xnm', String(xnm || '2025'));
-        body.set('xqm', String(xqm || '12'));
+        if (!xnm || !xqm) throw new Error('缺少明确的教务学期参数');
+        body.set('xnm', String(xnm));
+        body.set('xqm', String(xqm));
         body.set('kzlx', 'ck');
         body.set('xsdm', '');
         body.set('kclbdm', '');
@@ -912,8 +913,51 @@ function importFailure(trace, status, reasonCode, message, patch = {}) {
       message,
       summary: completed.summary || trace.summary,
       warnings: completed.warnings || [],
+      requestedTerm: completed.requestedTerm || null,
+      effectiveTerm: completed.effectiveTerm || null,
       refreshRequired: false
     }
+  };
+}
+
+function validateImportTermParams(input = {}, { requireLabel = true } = {}) {
+  const xnm = String(input.xnm ?? '').trim();
+  const xqm = String(input.xqm ?? '').trim();
+  const selectedTermLabel = String(input.selectedTermLabel ?? '').trim();
+  if (!xnm || !xqm || (requireLabel && !selectedTermLabel)) {
+    return { ok: false, reasonCode: IMPORT_REASON_CODES.MISSING_TERM_PARAMS, message: '必须明确选择教务学年和学期，不能使用默认学期。' };
+  }
+  const year = Number(xnm);
+  if (!/^\d{4}$/.test(xnm) || year < 2000 || year > 2100 || !/^\d{1,4}$/.test(xqm) || selectedTermLabel.length > 120) {
+    return { ok: false, reasonCode: IMPORT_REASON_CODES.INVALID_TERM_PARAMS, message: '教务学期参数格式无效，请重新选择教务系统提供的原始选项。' };
+  }
+  return { ok: true, xnm, xqm, selectedTermLabel };
+}
+
+function termView(xnm, xqm, label, verifiedByResponse = false) {
+  return { xnm: String(xnm || ''), xqm: String(xqm || ''), label: String(label || ''), verifiedByResponse: Boolean(verifiedByResponse) };
+}
+
+function resolveEffectiveImportTerm(analysis, requested) {
+  const responseTerms = Array.isArray(analysis.responseTerms) ? analysis.responseTerms : [];
+  if (!responseTerms.length) {
+    return { ok: true, requestedTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel), effectiveTerm: termView('', '', '', false) };
+  }
+  const mismatched = responseTerms.filter((term) => term.xnm !== requested.xnm || term.xqm !== requested.xqm);
+  if (mismatched.length || responseTerms.length !== 1) {
+    const effective = responseTerms.length === 1 ? responseTerms[0] : { xnm: '', xqm: '' };
+    return {
+      ok: false,
+      requestedTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel),
+      effectiveTerm: termView(effective.xnm, effective.xqm, effective.xnm && effective.xqm ? `${effective.xnm}/${effective.xqm}` : '响应包含多个学期', true),
+      responseTerms
+    };
+  }
+  return {
+    ok: true,
+    requestedTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel),
+    effectiveTerm: termView(requested.xnm, requested.xqm, requested.selectedTermLabel, true),
+    responseTerms
   };
 }
 
@@ -942,13 +986,15 @@ function addPreImportBackup(db, user, accountId, traceId, xnm, xqm) {
   return entry.id;
 }
 
-function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, trace, importCode = '' }) {
+function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, selectedTermLabel, trace, importCode = '' }) {
+  const requested = validateImportTermParams({ xnm, xqm, selectedTermLabel });
+  if (!requested.ok) return importFailure(trace, 400, requested.reasonCode, requested.message);
   const analysis = analyzeJwxtImport(jwxtData, {
     traceId: trace.traceId,
     userId: user.id,
     accountId,
-    xnm,
-    xqm,
+    xnm: requested.xnm,
+    xqm: requested.xqm,
     maxWeeks: Math.max(20, Number(db.meta?.totalWeeks || 20))
   });
   const traceBase = {
@@ -962,22 +1008,37 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, t
     errors: analysis.errors,
     timings: analysis.timings
   };
+  const resolvedTerm = resolveEffectiveImportTerm(analysis, requested);
+  const termTrace = {
+    selectedTermLabel: requested.selectedTermLabel,
+    requestedXnm: requested.xnm,
+    requestedXqm: requested.xqm,
+    effectiveXnm: resolvedTerm.effectiveTerm.xnm,
+    effectiveXqm: resolvedTerm.effectiveTerm.xqm,
+    requestedTerm: resolvedTerm.requestedTerm,
+    effectiveTerm: resolvedTerm.effectiveTerm,
+    responseTerms: resolvedTerm.responseTerms || [],
+    incompleteResponseTermCount: analysis.incompleteResponseTermCount || 0
+  };
+  if (!resolvedTerm.ok) {
+    return importFailure(trace, 422, IMPORT_REASON_CODES.TERM_RESPONSE_MISMATCH, '请求学期与教务响应课程学期不一致，未写入任何课程。', { ...traceBase, ...termTrace });
+  }
   if (!analysis.summary.received) {
-    return importFailure(trace, 422, IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, '教务响应中没有找到候选课程数组。', traceBase);
+    return importFailure(trace, 422, IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, '教务响应中没有找到候选课程数组。', { ...traceBase, ...termTrace });
   }
   if (!analysis.courses.length) {
     const reasonCode = analysis.errors[0]?.reasonCode || IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE;
-    return importFailure(trace, 422, reasonCode, '已收到教务数据，但所有候选均未通过安全解析。', traceBase);
+    return importFailure(trace, 422, reasonCode, '已收到教务数据，但所有候选均未通过安全解析。', { ...traceBase, ...termTrace });
   }
 
   const normalized = analysis.courses
     .map((item) => normalizeCourse(item, user.id, accountId))
     .filter((course) => course.name && course.day >= 1 && course.day <= 7 && course.slot >= 1 && course.slot <= 12 && course.weeks.length);
   if (!normalized.length || normalized.some((course) => course.accountId !== accountId)) {
-    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '规范化结果为空或 accountId 校验失败。', traceBase);
+    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '规范化结果为空或 accountId 校验失败。', { ...traceBase, ...termTrace });
   }
 
-  const termKey = `${String(xnm || '')}:${String(xqm || '')}`;
+  const termKey = `${requested.xnm}:${requested.xqm}`;
   const beforeCount = coursesForAccount(db, accountId).length;
   const nextDb = cloneDb(db);
   const existingSameTerm = nextDb.courses.filter((course) => isJwxtCourseForTerm(course, accountId, termKey));
@@ -993,10 +1054,10 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, t
   }
   const nextCourses = [...preserved, ...importedCourses];
   if (nextCourses.some((course) => !course.accountId) || normalized.some((course) => course.source !== 'jwxt')) {
-    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入结果范围校验失败，旧课程保持不变。', traceBase);
+    return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入结果范围校验失败，旧课程保持不变。', { ...traceBase, ...termTrace });
   }
 
-  addPreImportBackup(nextDb, user, accountId, trace.traceId, xnm, xqm);
+  addPreImportBackup(nextDb, user, accountId, trace.traceId, requested.xnm, requested.xqm);
   nextDb.courses = nextCourses;
   const importedAt = new Date().toISOString();
   if (importCode) {
@@ -1027,6 +1088,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, t
     const writeMs = Number(process.hrtime.bigint() - writeStart) / 1_000_000;
     return importFailure(trace, 500, IMPORT_REASON_CODES.UNKNOWN, '写入 db.json 失败，旧课程未被替换。', {
       ...traceBase,
+      ...termTrace,
       summary,
       timings: { ...analysis.timings, writeMs: Number(writeMs.toFixed(3)) }
     });
@@ -1035,6 +1097,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, t
   const warnings = [...analysis.warnings, ...appendWarnings];
   const completed = finishImportTrace(trace, {
     ...traceBase,
+    ...termTrace,
     status: 'success',
     message: `收到 ${summary.received} 条，识别 ${summary.recognized} 条，写入 ${summary.written} 条，合并 ${summary.merged} 条，过滤 ${summary.filtered} 条。`,
     summary,
@@ -1050,6 +1113,8 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, t
       traceId: trace.traceId,
       summary,
       warnings,
+      requestedTerm: resolvedTerm.requestedTerm,
+      effectiveTerm: resolvedTerm.effectiveTerm,
       refreshRequired: true,
       count: summary.written,
       rawCount: summary.received,
@@ -1225,8 +1290,13 @@ app.post('/api/my/import', requireLogin, (req, res) => {
 
 // Android 导入助手专用：App 内 WebView 中由用户自己登录教务系统，App 只上传课表 JSON，不上传教务密码。
 app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
-  const { jwxtData, replace = true, xnm = '', xqm = '' } = req.body || {};
-  const trace = importDiagnosticsStore.begin({ accountId: req.auth.accountId, replace, xnm, xqm });
+  const { jwxtData, replace = true, xnm = '', xqm = '', selectedTermLabel = '' } = req.body || {};
+  const trace = importDiagnosticsStore.begin({ accountId: req.auth.accountId, replace, xnm, xqm, selectedTermLabel, requestedXnm: xnm, requestedXqm: xqm });
+  const term = validateImportTermParams({ xnm, xqm, selectedTermLabel });
+  if (!term.ok) {
+    const failed = importFailure(trace, 400, term.reasonCode, term.message);
+    return res.status(failed.status).json(failed.body);
+  }
   if (!jwxtData || typeof jwxtData !== 'object') {
     const failed = importFailure(trace, 400, IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, '缺少教务系统课表数据 jwxtData。');
     return res.status(failed.status).json(failed.body);
@@ -1237,13 +1307,15 @@ app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
     const failed = importFailure(trace, 404, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '当前账号不存在。');
     return res.status(failed.status).json(failed.body);
   }
-  const result = executeJwxtImport({ db, user, accountId: req.auth.accountId, jwxtData, replace: Boolean(replace), xnm, xqm, trace });
+  const result = executeJwxtImport({ db, user, accountId: req.auth.accountId, jwxtData, replace: Boolean(replace), xnm: term.xnm, xqm: term.xqm, selectedTermLabel: term.selectedTermLabel, trace });
   return res.status(result.status).json(result.body);
 });
 
 
 app.post('/api/my/import-code', requireLogin, (req, res) => {
-  const { replace = true, xnm = '2025', xqm = '12' } = req.body || {};
+  const { replace = true, xnm = '', xqm = '', selectedTermLabel = '' } = req.body || {};
+  const term = validateImportTermParams({ xnm, xqm, selectedTermLabel });
+  if (!term.ok) return res.status(400).json({ ok: false, reasonCode: term.reasonCode, message: term.message });
   const db = readDb();
   ensureImportCodes(db);
 
@@ -1258,14 +1330,15 @@ app.post('/api/my/import-code', requireLogin, (req, res) => {
     sessionTokenHash: crypto.createHash('sha256').update(req.auth.token).digest('hex'),
     username: req.auth.user.username,
     replace: Boolean(replace),
-    xnm: String(xnm || '2025'),
-    xqm: String(xqm || '12'),
+    selectedTermLabel: term.selectedTermLabel,
+    xnm: term.xnm,
+    xqm: term.xqm,
     createdAt: new Date().toISOString(),
     expiresAt,
     usedAt: null
   });
   writeDb(db);
-  res.json({ ok: true, code, accountId: req.auth.accountId, expiresAt, replace: Boolean(replace), xnm: String(xnm || '2025'), xqm: String(xqm || '12') });
+  res.json({ ok: true, code, accountId: req.auth.accountId, expiresAt, replace: Boolean(replace), selectedTermLabel: term.selectedTermLabel, xnm: term.xnm, xqm: term.xqm });
 });
 
 
@@ -1284,14 +1357,17 @@ app.get('/api/import-code/:code', (req, res) => {
   if (secondsLeft <= 0) {
     return res.status(410).json({ ok: false, reasonCode: IMPORT_REASON_CODES.EXPIRED_IMPORT_CODE, message: '导入码已过期，请回到小德课表重新生成' });
   }
+  const term = validateImportTermParams(record);
+  if (!term.ok) return res.status(422).json({ ok: false, reasonCode: term.reasonCode, message: term.message });
 
   res.json({
     ok: true,
     code: record.code,
     accountId: record.accountId,
     replace: Boolean(record.replace),
-    xnm: String(record.xnm || '2025'),
-    xqm: String(record.xqm || '12'),
+    selectedTermLabel: term.selectedTermLabel,
+    xnm: term.xnm,
+    xqm: term.xqm,
     expiresAt: record.expiresAt,
     secondsLeft,
     message: `导入码有效，剩余约 ${Math.ceil(secondsLeft / 60)} 分钟`
@@ -1300,12 +1376,12 @@ app.get('/api/import-code/:code', (req, res) => {
 
 app.post('/api/import-code/:code/submit', (req, res) => {
   const code = String(req.params.code || '').trim().toUpperCase();
-  const { jwxtData, accountId: submittedAccountId } = req.body || {};
+  const { jwxtData, accountId: submittedAccountId, selectedTermLabel: submittedTermLabel = '', xnm: submittedXnm = '', xqm: submittedXqm = '' } = req.body || {};
 
   const db = readDb();
   ensureImportCodes(db);
   const record = db.importCodes.find((item) => item.code === code);
-  const trace = importDiagnosticsStore.begin({ accountId: record?.accountId || '', replace: record?.replace, xnm: record?.xnm, xqm: record?.xqm });
+  const trace = importDiagnosticsStore.begin({ accountId: record?.accountId || '', replace: record?.replace, selectedTermLabel: record?.selectedTermLabel, xnm: record?.xnm, xqm: record?.xqm, requestedXnm: record?.xnm, requestedXqm: record?.xqm });
   if (!code || !record) {
     const failed = importFailure(trace, 404, IMPORT_REASON_CODES.UNKNOWN, '导入码不存在，请回到小德课表重新生成。');
     return res.status(failed.status).json(failed.body);
@@ -1320,6 +1396,15 @@ app.post('/api/import-code/:code/submit', (req, res) => {
   }
   if (submittedAccountId && String(submittedAccountId) !== record.accountId) {
     const failed = importFailure(trace, 403, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入码与当前 accountId 不匹配。');
+    return res.status(failed.status).json(failed.body);
+  }
+  const term = validateImportTermParams(record);
+  if (!term.ok) {
+    const failed = importFailure(trace, 400, term.reasonCode, term.message);
+    return res.status(failed.status).json(failed.body);
+  }
+  if (String(submittedXnm).trim() !== term.xnm || String(submittedXqm).trim() !== term.xqm || String(submittedTermLabel).trim() !== term.selectedTermLabel) {
+    const failed = importFailure(trace, 403, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, 'Android 冻结的学期与导入码绑定学期不一致。');
     return res.status(failed.status).json(failed.body);
   }
   if (!jwxtData || typeof jwxtData !== 'object') {
@@ -1342,8 +1427,9 @@ app.post('/api/import-code/:code/submit', (req, res) => {
     accountId: record.accountId,
     jwxtData,
     replace: Boolean(record.replace),
-    xnm: record.xnm,
-    xqm: record.xqm,
+    xnm: term.xnm,
+    xqm: term.xqm,
+    selectedTermLabel: term.selectedTermLabel,
     trace,
     importCode: record.code
   });
@@ -1452,6 +1538,13 @@ app.get('/api/my/import-diagnostics/latest', requireLogin, (req, res) => {
       reasonCode: trace.reasonCode || null,
       message: trace.message || '',
       replace: Boolean(trace.replace),
+      selectedTermLabel: trace.selectedTermLabel || '',
+      requestedXnm: trace.requestedXnm || '',
+      requestedXqm: trace.requestedXqm || '',
+      effectiveXnm: trace.effectiveXnm || '',
+      effectiveXqm: trace.effectiveXqm || '',
+      requestedTerm: trace.requestedTerm || null,
+      effectiveTerm: trace.effectiveTerm || null,
       xnm: trace.xnm || '',
       xqm: trace.xqm || '',
       timings: trace.timings || {}

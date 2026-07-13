@@ -11,8 +11,8 @@ android {
         applicationId = "com.xiaode.importhelper"
         minSdk = 23
         targetSdk = 35
-        versionCode = 29
-        versionName = "0.29.0-v40-import-diagnostics"
+        versionCode = 30
+        versionName = "0.30.0-v40-term-params"
     }
 
     compileOptions {
