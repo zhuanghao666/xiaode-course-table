@@ -11,8 +11,8 @@ android {
         applicationId = "com.xiaode.importhelper"
         minSdk = 23
         targetSdk = 35
-        versionCode = 31
-        versionName = "0.31.0-v41-term-isolation-weeks"
+        versionCode = 32
+        versionName = "0.32.0-v41-mobile-course-layout"
     }
 
     compileOptions {

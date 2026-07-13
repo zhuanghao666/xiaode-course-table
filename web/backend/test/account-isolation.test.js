@@ -352,3 +352,164 @@ test('legacy accountId migration only fills uniquely attributable records', asyn
   assert.equal(disk.courses.find((course) => course.id === 'legacy-unique').accountId, 'account-b');
   assert.ok(disk.meta.migrationWarnings.some((warning) => warning.entityType === 'course' && warning.id === 'legacy-ambiguous'));
 });
+
+test('migration and login writes preserve scoped legacy courses that cannot be consolidated', async (t) => {
+  const legacy = seedDb();
+  legacy.courses = [
+    {
+      id: 'legacy-missing-name',
+      userId: 'user-a',
+      accountId: 'account-a',
+      termKey: 'account-a:legacy',
+      day: 2,
+      slot: 2,
+      weeks: [1, 2],
+      legacyMarker: 'missing-name-must-survive'
+    },
+    {
+      id: 'legacy-invalid-slot',
+      userId: 'user-a',
+      accountId: 'account-a',
+      termKey: 'account-a:legacy',
+      day: 3,
+      slot: 99,
+      name: 'Invalid Slot Must Survive',
+      weeks: [1, 2],
+      legacyMarker: 'invalid-slot-must-survive'
+    }
+  ];
+  const { baseUrl, dataFile } = await launchBackend(t, legacy);
+
+  // 登录会创建 session 并触发 writeDb；两条无法安全规范化的旧记录仍须原样落盘。
+  const login = await request(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    body: { username: 'alpha', password: 'pass-a' }
+  });
+  assert.equal(login.status, 200);
+  assert.equal((await request(baseUrl, '/api/auth/me', { token: login.data.token })).status, 200);
+
+  const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  const missingName = disk.courses.find((course) => course.id === 'legacy-missing-name');
+  const invalidSlot = disk.courses.find((course) => course.id === 'legacy-invalid-slot');
+  assert.ok(missingName);
+  assert.equal(Object.hasOwn(missingName, 'name'), false);
+  assert.equal(missingName.slot, 2);
+  assert.equal(missingName.legacyMarker, 'missing-name-must-survive');
+  assert.ok(invalidSlot);
+  assert.equal(invalidSlot.slot, 99);
+  assert.equal(Object.hasOwn(invalidSlot, 'startSlot'), false);
+  assert.equal(Object.hasOwn(invalidSlot, 'endSlot'), false);
+  assert.equal(invalidSlot.legacyMarker, 'invalid-slot-must-survive');
+});
+
+test('course POST and PUT return the retained logical course id and merged range', async (t) => {
+  const initial = seedDb();
+  initial.courses.push({
+    id: 'course-editable',
+    userId: 'user-a',
+    accountId: 'account-a',
+    day: 5,
+    slot: 5,
+    name: 'Edit Me',
+    weeks: [1]
+  });
+  const { baseUrl, dataFile } = await launchBackend(t, initial);
+  const login = await request(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    body: { username: 'alpha', password: 'pass-a' }
+  });
+  const token = login.data.token;
+
+  const duplicate = await request(baseUrl, '/api/my/courses', {
+    token,
+    method: 'POST',
+    body: { day: 1, slot: 1, name: 'A-物理', weeks: [1] }
+  });
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(
+    { id: duplicate.data.course.id, startSlot: duplicate.data.course.startSlot, endSlot: duplicate.data.course.endSlot },
+    { id: 'course-a', startSlot: 1, endSlot: 1 }
+  );
+
+  const adjacent = await request(baseUrl, '/api/my/courses', {
+    token,
+    method: 'POST',
+    body: { day: 1, slot: 2, name: 'A-物理', weeks: [1] }
+  });
+  assert.equal(adjacent.status, 200);
+  assert.deepEqual(
+    { id: adjacent.data.course.id, startSlot: adjacent.data.course.startSlot, endSlot: adjacent.data.course.endSlot },
+    { id: 'course-a', startSlot: 1, endSlot: 2 }
+  );
+
+  const updated = await request(baseUrl, '/api/my/courses/course-editable', {
+    token,
+    method: 'PUT',
+    body: { day: 1, slot: 3, name: 'A-物理', weeks: [1] }
+  });
+  assert.equal(updated.status, 200);
+  assert.deepEqual(
+    { id: updated.data.course.id, startSlot: updated.data.course.startSlot, endSlot: updated.data.course.endSlot },
+    { id: 'course-a', startSlot: 1, endSlot: 3 }
+  );
+
+  const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  assert.ok(disk.courses.some((course) => course.id === 'course-a'));
+  assert.equal(disk.courses.some((course) => course.id === 'course-editable'), false);
+  const storedLogical = disk.courses.filter((course) => course.name === 'A-物理');
+  assert.equal(storedLogical.length, 1);
+  assert.deepEqual(
+    { id: storedLogical[0].id, startSlot: storedLogical[0].startSlot, endSlot: storedLogical[0].endSlot },
+    { id: 'course-a', startSlot: 1, endSlot: 3 }
+  );
+  const me = await request(baseUrl, '/api/auth/me', { token });
+  const logical = me.data.courses.filter((course) => course.name === 'A-物理');
+  assert.equal(logical.length, 1);
+  assert.deepEqual(
+    { id: logical[0].id, startSlot: logical[0].startSlot, endSlot: logical[0].endSlot },
+    { id: 'course-a', startSlot: 1, endSlot: 3 }
+  );
+
+  const aliasCourse = await request(baseUrl, '/api/my/courses', {
+    token,
+    method: 'POST',
+    body: { day: 2, slot: 8, name: ' ', courseName: 'Alias Course', location: '', room: 'Room A101', weeks: [1] }
+  });
+  assert.equal(aliasCourse.status, 200);
+  assert.equal(aliasCourse.data.course.name, 'Alias Course');
+  assert.equal(aliasCourse.data.course.location, 'Room A101');
+});
+
+test('/api/my/import append reports input count separately from logical result count', async (t) => {
+  const initial = seedDb();
+  initial.courses = initial.courses.map((course) => course.id === 'course-a' ? { ...course, source: 'manual' } : course);
+  const { baseUrl } = await launchBackend(t, initial);
+  const login = await request(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    body: { username: 'alpha', password: 'pass-a' }
+  });
+
+  const imported = await request(baseUrl, '/api/my/import', {
+    token: login.data.token,
+    method: 'POST',
+    body: {
+      replace: false,
+      courses: [
+        { day: 1, slot: 1, name: 'A-物理', weeks: [1] },
+        { day: 1, slot: 2, name: 'A-物理', weeks: [1] }
+      ]
+    }
+  });
+  assert.equal(imported.status, 200);
+  assert.equal(imported.data.count, 2);
+  assert.equal(imported.data.logicalCount, 1);
+  assert.equal(imported.data.mergedCount, 2);
+
+  const me = await request(baseUrl, '/api/auth/me', { token: login.data.token });
+  const logical = me.data.courses.filter((course) => course.name === 'A-物理');
+  assert.equal(logical.length, 1);
+  assert.deepEqual(
+    { startSlot: logical[0].startSlot, endSlot: logical[0].endSlot },
+    { startSlot: 1, endSlot: 2 }
+  );
+});

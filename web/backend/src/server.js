@@ -21,7 +21,7 @@ const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FIL
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
 const APP_VERSION = 'v41-dev';
-const DB_SCHEMA_VERSION = 5;
+const DB_SCHEMA_VERSION = 6;
 const DEFAULT_TOTAL_WEEKS = 20;
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
 const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
@@ -104,6 +104,7 @@ function writeDb(db) {
       console.error('[mysql-mirror] 后台同步失败，JSON 已保存：', String(err?.message || err));
     });
   }
+  return normalized;
 }
 
 function uid(prefix = 'id') {
@@ -123,6 +124,8 @@ const DEFAULT_PREFERENCES = {
   tableSize: 'classic',
   tableDayWidth: 48,
   tableRowHeight: 118,
+  tableFontSize: 16,
+  layoutCustomized: false,
   hideFifthSlot: false,
   courseSettings: {},
   reminderSettings: {}
@@ -143,6 +146,7 @@ function sanitizePreferences(input = {}) {
         termStart: String(src.courseSettings.termStart ?? ''),
         showLocation: src.courseSettings.showLocation !== false,
         showTeacher: src.courseSettings.showTeacher !== false,
+        showSectionRange: src.courseSettings.showSectionRange !== false,
         showClassGroup: Boolean(src.courseSettings.showClassGroup),
         customTime: Boolean(src.courseSettings.customTime)
       }
@@ -165,6 +169,8 @@ function sanitizePreferences(input = {}) {
     tableSize,
     tableDayWidth: num(src.tableDayWidth, tableSize === 'screenshot' ? 42 : tableSize === 'classroom' ? 52 : 48, 38, 96),
     tableRowHeight: num(src.tableRowHeight, tableSize === 'screenshot' ? 72 : tableSize === 'classroom' ? 78 : 118, 58, 160),
+    tableFontSize: num(src.tableFontSize, tableSize === 'screenshot' ? 10 : 16, 9, 20),
+    layoutCustomized: Boolean(src.layoutCustomized),
     hideFifthSlot: Boolean(src.hideFifthSlot),
     courseSettings,
     reminderSettings
@@ -398,6 +404,21 @@ function migrateDbToV38(input = {}) {
       return { ...course, ...term };
     });
 
+  // v41：把旧版“每节一条”的物理记录幂等折叠为一条逻辑节次范围；无法确认账号归属的记录原样保留。
+  const scopedCourses = db.courses.filter((course) => course.accountId && course.termKey && accountOwners.get(course.accountId) === course.userId);
+  const unresolvedCourses = db.courses.filter((course) => !scopedCourses.includes(course));
+  const consolidatedCourses = mergeCourseRecords(scopedCourses, { separateSources: true }).courses;
+  if (consolidatedCourses.length < scopedCourses.length) {
+    const warning = {
+      code: 'COURSE_RECORDS_CONSOLIDATED',
+      entityType: 'course',
+      id: 'all',
+      message: `已将 ${scopedCourses.length} 条逐节/重复课程安全折叠为 ${consolidatedCourses.length} 条逻辑课程范围`
+    };
+    migrationWarnings.set(`${warning.code}:course:${warning.id}`, warning);
+  }
+  db.courses = [...consolidatedCourses, ...unresolvedCourses];
+
   const termMap = new Map();
   for (const rawTerm of db.terms) {
     if (!rawTerm || typeof rawTerm !== 'object') continue;
@@ -520,7 +541,16 @@ function activeTermForAccount(db, accountId) {
 
 function coursesForAccount(db, accountId, termKey = activeTermForAccount(db, accountId)?.termKey || '') {
   if (!termKey) return [];
-  return allCoursesForAccount(db, accountId).filter((course) => course.termKey === termKey);
+  const scoped = allCoursesForAccount(db, accountId).filter((course) => course.termKey === termKey);
+  // 输出层忽略存储来源合并逻辑课程；底层仍保留 source 边界，保证 jwxt replace 不会吞掉手工课程。
+  return mergeCourseRecords(scoped).courses;
+}
+
+function retainedLogicalCourse(db, target) {
+  const logical = coursesForAccount(db, target.accountId, target.termKey);
+  const byId = logical.find((course) => course.id === target.id);
+  if (byId) return byId;
+  return logical.find((course) => mergeCourseRecords([course, target]).courses.length === 1) || null;
 }
 
 function publicTerm(db, term) {
@@ -557,21 +587,34 @@ function reminderForAccount(db, userId, accountId) {
   return (db.reminders || []).find((reminder) => reminder.accountId === accountId && reminder.userId === userId) || null;
 }
 
+function firstNonEmptyCourseText(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 
 function normalizeCourse(input, userId, accountId, term = null) {
-  const weekText = String(input.weekText || '').trim();
+  const weekText = String(input.weekText || input.weekPattern || '').trim();
   const parsed = parseWeeksDetailed(input.weeks, weekText, { maxWeeks: 60 });
   const scopedTerm = term || normalizeLegacyCourseTerm(input, accountId);
+  const requestedSlot = Number(input.slot ?? input.startSlot ?? input.startSection ?? 0);
+  const requestedStart = Number(input.startSlot ?? input.startSection ?? requestedSlot);
+  const requestedEnd = Number(input.endSlot ?? input.endSection ?? requestedStart);
+  const startSlot = Number.isInteger(requestedStart) && requestedStart >= 1 && requestedStart <= 12 ? requestedStart : 0;
+  const endSlot = Number.isInteger(requestedEnd) && requestedEnd >= startSlot && requestedEnd <= 12 ? requestedEnd : startSlot;
   return {
     id: input.id || uid('c'),
     userId,
     accountId: String(accountId || '').trim(),
-    day: Number(input.day),
-    slot: Number(input.slot),
-    name: String(input.name || '').trim(),
+    day: Number(input.day ?? input.weekday),
+    slot: startSlot,
+    name: firstNonEmptyCourseText(input.name, input.courseName),
     shortName: String(input.shortName || '').trim(),
-    teacher: String(input.teacher || '').trim(),
-    location: String(input.location || '').trim(),
+    teacher: firstNonEmptyCourseText(input.teacher),
+    location: firstNonEmptyCourseText(input.location, input.room),
     classGroup: String(input.classGroup || '').trim(),
     weekText: parsed.normalizedWeekText || weekText,
     weeks: parsed.baseWeeks,
@@ -580,8 +623,8 @@ function normalizeCourse(input, userId, accountId, term = null) {
     source: input.source || 'manual',
     sourceDetail: String(input.sourceDetail || '').slice(0, 200),
     sourceIndex: Number.isInteger(Number(input.sourceIndex)) ? Number(input.sourceIndex) : null,
-    startSlot: Number(input.startSlot || input.slot || 0),
-    endSlot: Number(input.endSlot || input.slot || 0),
+    startSlot,
+    endSlot,
     termKey: String(scopedTerm.termKey || input.termKey || legacyTermKey(accountId)).slice(0, 160),
     xnm: String(scopedTerm.xnm || input.xnm || '').slice(0, 20),
     xqm: String(scopedTerm.xqm || input.xqm || '').slice(0, 20),
@@ -1544,8 +1587,8 @@ app.post('/api/my/courses', requireLogin, (req, res) => {
     return res.status(400).json({ ok: false, message: '课程名、星期、节次必填' });
   }
   db.courses.push(course);
-  writeDb(db);
-  res.json({ ok: true, course });
+  const savedDb = writeDb(db);
+  res.json({ ok: true, course: retainedLogicalCourse(savedDb, course) || course });
 });
 
 app.put('/api/my/courses/:id', requireLogin, (req, res) => {
@@ -1555,9 +1598,15 @@ app.put('/api/my/courses/:id', requireLogin, (req, res) => {
   if (idx === -1) {
     return res.status(404).json({ ok: false, message: '课程不存在或不属于你' });
   }
-  db.courses[idx] = normalizeCourse({ ...db.courses[idx], ...req.body, id: req.params.id }, req.auth.user.id, req.auth.accountId, activeTerm);
-  writeDb(db);
-  res.json({ ok: true, course: db.courses[idx] });
+  const patch = { ...db.courses[idx], ...req.body, id: req.params.id };
+  if (req.body?.slot !== undefined && req.body?.startSlot === undefined && req.body?.endSlot === undefined) {
+    patch.startSlot = req.body.slot;
+    patch.endSlot = req.body.slot;
+  }
+  db.courses[idx] = normalizeCourse(patch, req.auth.user.id, req.auth.accountId, activeTerm);
+  const updated = db.courses[idx];
+  const savedDb = writeDb(db);
+  res.json({ ok: true, course: retainedLogicalCourse(savedDb, updated) || updated });
 });
 
 app.delete('/api/my/courses', requireLogin, (req, res) => {
@@ -1594,13 +1643,12 @@ app.post('/api/my/import', requireLogin, (req, res) => {
     .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId, activeTerm))
     .filter((c) => c.name && c.day && c.slot);
 
-  if (replace) {
-    db.courses = db.courses.filter((c) => !(courseBelongsToAccount(c, req.auth.accountId) && c.termKey === activeTerm.termKey)).concat(normalized);
-  } else {
-    db.courses = db.courses.concat(normalized);
-  }
+  const existing = db.courses.filter((course) => courseBelongsToAccount(course, req.auth.accountId) && course.termKey === activeTerm.termKey);
+  const preserved = db.courses.filter((course) => !(courseBelongsToAccount(course, req.auth.accountId) && course.termKey === activeTerm.termKey));
+  const consolidated = mergeCourseRecords(replace ? normalized : [...existing, ...normalized], { separateSources: true });
+  db.courses = [...preserved, ...consolidated.courses];
   writeDb(db);
-  res.json({ ok: true, count: normalized.length });
+  res.json({ ok: true, count: normalized.length, logicalCount: consolidated.courses.length, mergedCount: consolidated.events.length });
 });
 
 

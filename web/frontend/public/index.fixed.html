@@ -308,8 +308,9 @@
       body[data-table-size="screenshot"] .timecell .muted{font-size:9px;line-height:1.1;font-weight:800}
       body[data-table-size="screenshot"] .slot{min-height:72px;padding:2px}
       body[data-table-size="screenshot"] .course{min-height:66px;border-radius:8px;padding:4px 2px;justify-content:center}
-      body[data-table-size="screenshot"] .course .name{font-size:10.5px;line-height:1.12;margin:0;word-break:break-word;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4}
-      body[data-table-size="screenshot"] .course .meta2{display:none}
+      body[data-table-size="screenshot"] .course .name{font-size:var(--xiaode-course-font-size,10px)!important;line-height:1.12;margin:0 0 2px;word-break:break-word;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3}
+      body[data-table-size="screenshot"] .course .meta2{display:block;font-size:9px;line-height:1.12;font-weight:850;word-break:break-word;overflow:hidden}
+      body[data-table-size="screenshot"] .course .course-location{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
       body[data-table-size="screenshot"] .mark{display:none!important}
       .table-size-options{grid-template-columns:1fr}
     }
@@ -426,10 +427,13 @@
     body[data-table-size="screenshot"] .course{min-height:calc(var(--xiaode-row-height,72px) - 6px)}
     body[data-table-size="classroom"] .timecell,body[data-table-size="classroom"] .slot{min-height:var(--xiaode-row-height,78px)}
     body[data-table-size="classroom"] .course{min-height:calc(var(--xiaode-row-height,78px) - 6px)}
+    body .course .name{font-size:var(--xiaode-course-font-size,16px)}
+    .course-field{display:block}
+    .course-section{margin-top:5px;font-size:10px;font-weight:900;opacity:.86}
     .table-length-control{margin-top:12px;border:1px solid rgba(160,170,182,.28);border-radius:22px;background:rgba(255,255,255,.66);padding:14px;box-shadow:0 8px 18px rgba(80,90,108,.05)}
     .table-length-head{display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:900;color:var(--text);margin-bottom:8px}
     .table-length-head span{font-size:13px;color:var(--muted);font-weight:900;white-space:nowrap}
-    #tableHeightRange{padding:0;accent-color:var(--accent);cursor:pointer}
+    #tableHeightRange,#tableFontSizeRange{padding:0;accent-color:var(--accent);cursor:pointer}
     .reminder-page{display:grid;gap:12px}
     .reminder-card{border-radius:24px;background:rgba(255,255,255,.76);border:1px solid rgba(160,170,182,.18);padding:14px;box-shadow:0 8px 18px rgba(80,90,108,.05)}
     .reminder-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;font-weight:900;color:var(--text)}
@@ -655,13 +659,14 @@
     ];
     function pickHealingQuote(){return HEALING_QUOTES[Math.floor(Math.random()*HEALING_QUOTES.length)]}
     const STYLE={public_required:'var(--public_required)',major_required:'var(--major_required)',major_elective:'var(--major_elective)',public_elective:'var(--public_elective)',lab:'var(--lab)',custom:'var(--custom)'};
-    const DEFAULT_COURSE_SETTINGS={totalWeeks:'',weekStartDay:'1',termStart:'',showLocation:true,showTeacher:true,showClassGroup:false,customTime:false};
+    const DEFAULT_COURSE_SETTINGS={totalWeeks:'',weekStartDay:'1',termStart:'',showLocation:true,showTeacher:true,showSectionRange:true,showClassGroup:false,customTime:false};
+    const MOBILE_COMPACT_LAYOUT=Object.freeze({tableSize:'screenshot',tableDayWidth:38,tableRowHeight:58,tableFontSize:10,infoMode:'compact'});
     function currentStoredAccountId(){return localStorage.getItem('xiaodeCurrentAccountId')||''}
     function accountStorageKey(base,accountId=currentStoredAccountId()){return accountId?`${base}:${accountId}`:`${base}:guest`}
     function loadAccountLocal(base,fallback=''){const scoped=localStorage.getItem(accountStorageKey(base));return scoped===null?(localStorage.getItem(base)??fallback):scoped}
     function saveAccountLocal(base,value,accountId=state.accountId){localStorage.setItem(accountStorageKey(base,accountId),String(value))}
     function loadCourseSettings(){try{const scoped=localStorage.getItem(accountStorageKey('xiaodeCourseSettings'));const legacy=localStorage.getItem('xiaodeCourseSettings');return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
-    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],activeTerm:null,availableTerms:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
+    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],activeTerm:null,availableTerms:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),tableFontSize:Number(loadAccountLocal('xiaodeTableFontSize','0')),layoutCustomized:localStorage.getItem(accountStorageKey('xiaodeLayoutCustomized'))==='1',hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
     const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
     function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
     function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;saveAccountLocal('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
@@ -677,6 +682,8 @@
         tableSize:state.tableSize,
         tableDayWidth:state.tableDayWidth,
         tableRowHeight:state.tableRowHeight,
+        tableFontSize:state.tableFontSize,
+        layoutCustomized:!!state.layoutCustomized,
         hideFifthSlot:!!state.hideFifthSlot,
         courseSettings:state.courseSettings,
         reminderSettings:loadReminderSettings()
@@ -685,6 +692,36 @@
     function accountPreferenceKey(user=state.user){ const accountId=user?.accountId||state.accountId; return accountId ? `xiaodeAccountPreferences:${accountId}` : ''; }
     function saveAccountPreferencesLocal(snapshot=currentPreferenceSnapshot(), user=state.user){ const key=accountPreferenceKey(user); if(key) localStorage.setItem(key, JSON.stringify(snapshot)); }
     function loadAccountPreferencesLocal(user=state.user){ try{ const key=accountPreferenceKey(user); return key?JSON.parse(localStorage.getItem(key)||'{}'):{}; }catch(_){ return {}; } }
+    function isMobilePortrait(){
+      try{ return window.matchMedia('(max-width: 1000px) and (orientation: portrait)').matches; }
+      catch(_){ return window.innerWidth<=1000 && window.innerHeight>=window.innerWidth; }
+    }
+    function isAutomaticMobileCompactProfile(pref={}){
+      const st={...DEFAULT_COURSE_SETTINGS,...(pref.courseSettings||{})};
+      return normalizeTableSize(pref.tableSize)==='screenshot'
+        && Number(pref.tableDayWidth)===MOBILE_COMPACT_LAYOUT.tableDayWidth
+        && Number(pref.tableRowHeight)===MOBILE_COMPACT_LAYOUT.tableRowHeight
+        && Number(pref.tableFontSize||MOBILE_COMPACT_LAYOUT.tableFontSize)===MOBILE_COMPACT_LAYOUT.tableFontSize
+        && (pref.infoMode||'compact')==='compact'
+        && st.showLocation!==false && st.showTeacher===false && st.showSectionRange===false && !st.showClassGroup;
+    }
+    function legacyLayoutLooksCustomized(pref={}){
+      if(pref.layoutCustomized===true) return true;
+      if(pref.layoutCustomized===false && isAutomaticMobileCompactProfile(pref)) return false;
+      const mode=normalizeTableSize(pref.tableSize||'classic');
+      const st={...DEFAULT_COURSE_SETTINGS,...(pref.courseSettings||{})};
+      return mode!=='classic'
+        || (Number(pref.tableDayWidth)>0 && Number(pref.tableDayWidth)!==defaultTableDayWidth(mode))
+        || (Number(pref.tableRowHeight)>0 && Number(pref.tableRowHeight)!==defaultTableRowHeight(mode))
+        || (Number(pref.tableFontSize)>0 && Number(pref.tableFontSize)!==defaultTableFontSize(mode))
+        || pref.infoMode==='full' || pref.hideFifthSlot===true
+        || st.showLocation===false || st.showTeacher===false || st.showSectionRange===false || st.showClassGroup===true;
+    }
+    function markLayoutCustomized(){
+      if(state.applyingPreferences) return;
+      state.layoutCustomized=true;
+      saveAccountLocal('xiaodeLayoutCustomized','1');
+    }
     const preferenceSaveTimers=new Map();
     function schedulePreferenceSave(){
       if(!state.user||!state.token||state.applyingPreferences) return;
@@ -706,15 +743,24 @@
     }
     function applyAccountPreferences(pref={}){
       const fallback=loadAccountPreferencesLocal();
-      const p={...fallback,...(pref||{})};
+      // 本机修改会先可靠落到账号隔离的 localStorage；它应优先于可能尚未完成异步保存的服务端旧快照。
+      const p={...(pref||{}),...fallback};
+      const layoutCustomized=localStorage.getItem(accountStorageKey('xiaodeLayoutCustomized',state.accountId))==='1' || p.layoutCustomized===true || legacyLayoutLooksCustomized(p);
       state.applyingPreferences=true;
       try{
         if(p.theme) applyTheme(p.theme);
-        if(p.infoMode) state.infoMode=p.infoMode;
         if(typeof p.bottomToolbarHidden==='boolean') state.bottomToolbarHidden=!!p.bottomToolbarHidden;
-        if(p.tableSize) applyTableSize(p.tableSize,{width:p.tableDayWidth,height:p.tableRowHeight});
+        state.layoutCustomized=layoutCustomized;
+        saveAccountLocal('xiaodeLayoutCustomized',layoutCustomized?'1':'0');
+        if(!layoutCustomized){
+          if(isMobilePortrait()) applyMobileCompactDefaults(p.courseSettings||{});
+          else applyDesktopDefaultLayout(p.courseSettings||{});
+        }else{
+          state.infoMode=p.infoMode||'compact';
+          applyTableSize(p.tableSize||'classic',{width:p.tableDayWidth,height:p.tableRowHeight,fontSize:p.tableFontSize});
+          saveCourseSettings(p.courseSettings||DEFAULT_COURSE_SETTINGS,{markCustomized:false});
+        }
         if(typeof p.hideFifthSlot==='boolean'){ state.hideFifthSlot=!!p.hideFifthSlot; saveAccountLocal('xiaodeHideFifthSlot',state.hideFifthSlot?'1':'0'); }
-        if(p.courseSettings) saveCourseSettings(p.courseSettings);
         if(p.reminderSettings) saveReminderSettings(p.reminderSettings);
         saveAccountLocal('xiaodeBottomToolbarHidden', state.bottomToolbarHidden?'1':'0');
         updateBottomToolbar(!!state.user);
@@ -732,7 +778,7 @@
     function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:getActiveTermTotalWeeks(),termStart:getActiveTermStart(),weekStartDay:Number(settings.weekStartDay||1)}; }
     function totalWeeks(){ return getActiveTermTotalWeeks(); }
     function clampPreviewWeek(){ if(state.previewWeek!==null) state.previewWeek=Math.max(1,Math.min(totalWeeks(),Number(state.previewWeek)||1)); }
-    function saveCourseSettings(next){ state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
+    function saveCourseSettings(next,options={}){ if(options.markCustomized!==false) markLayoutCustomized(); state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
     function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
     const DEFAULT_12_SLOTS=[
       {slot:1,label:'第1节',start:'08:00',end:'08:45',range:'08:00-08:45'},
@@ -774,33 +820,123 @@
       return `${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }
     function setHideFifthSlot(hidden){
+      markLayoutCustomized();
       state.hideFifthSlot=!!hidden;
       saveAccountLocal('xiaodeHideFifthSlot', state.hideFifthSlot?'1':'0');
       renderAll();
       schedulePreferenceSave();
       toast(state.hideFifthSlot?'已隐藏第5节':'已显示第5节');
     }
+    function setInfoMode(mode){
+      state.infoMode=mode==='full'?'full':'compact';
+      markLayoutCustomized();
+      renderAll();
+      schedulePreferenceSave();
+    }
     function timeToMin(t){const [h,m]=String(t||'00:00').split(':').map(Number); return h*60+m}
     function getWeek(now=new Date()){const meta=effectiveMeta(); if(!meta.termStart) return 1; const start=new Date(`${meta.termStart}T00:00:00`); if(Number.isNaN(start.getTime())) return 1; const diff=Math.floor((now-start)/86400000); return Math.max(1,Math.min(totalWeeks(),Math.floor(diff/7)+1));}
     function getSelectedWeek(){return Math.max(1,Math.min(totalWeeks(),state.previewWeek||getWeek()))}
     function getDayIndex(now=new Date()){const d=now.getDay(); return d===0?7:d}
     function getSlot(num){return state.slots.find(s=>Number(s.slot)===Number(num))||{label:'',range:'',start:'00:00',end:'00:00'}}
-    function activeInWeek(c,w){if(!c.weeks.includes(w)) return false; if(c.oddEven==='odd'&&w%2===0) return false; if(c.oddEven==='even'&&w%2===1) return false; return true}
-    function coursesForWeek(w){return state.courses.filter(c=>activeInWeek(c,w)).sort((a,b)=>(a.day-b.day)||(a.slot-b.slot))}
-    function nowCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>c.day===d&&m>=timeToMin(getSlot(c.slot).start)&&m<=timeToMin(getSlot(c.slot).end))||null}
-    function nextCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>c.day>d||(c.day===d&&timeToMin(getSlot(c.slot).start)>m))||null}
-    function soonCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>c.day===d&&timeToMin(getSlot(c.slot).start)>m&&timeToMin(getSlot(c.slot).start)-m<=10)||null}
-    function courseMergeKey(c){ return [c.name||'',c.shortName||'',c.teacher||'',c.location||'',c.classGroup||'',c.category||'',c.oddEven||'all'].map(v=>String(v).trim().toLowerCase()).join('|'); }
-    function groupSameCourses(list){
-      const map=new Map();
-      (list||[]).forEach(c=>{ const key=courseMergeKey(c); if(!map.has(key)) map.set(key,{key,course:c,count:0,ids:[]}); const g=map.get(key); g.count+=1; g.ids.push(c.id); });
-      return Array.from(map.values()).sort((a,b)=>(a.course.slot-b.course.slot)||String(a.course.name||'').localeCompare(String(b.course.name||''),'zh-Hans-CN'));
+    function normalizeCourseText(value){ return String(value??'').replace(/\s+/g,' ').trim(); }
+    function firstCourseText(...values){ for(const value of values){ const text=normalizeCourseText(value); if(text) return text; } return ''; }
+    function courseWeeks(c){ return [...new Set((Array.isArray(c?.weeks)?c.weeks:[]).map(Number).filter(Number.isInteger))].sort((a,b)=>a-b); }
+    function effectiveCourseWeeks(c){ const parity=String(c?.oddEven||'all'); return courseWeeks(c).filter(w=>parity==='odd'?w%2===1:(parity==='even'?w%2===0:true)); }
+    function courseWeeksFingerprint(c){ const raw=courseWeeks(c); const effective=effectiveCourseWeeks(c); return raw.length?`weeks:${effective.join(',')}`:`pattern:${normalizeCourseText(c?.weekPattern||c?.weekText||'')}|parity:${normalizeCourseText(c?.oddEven||'all')}`; }
+    function courseStartSlot(c){ const value=Number(c?.startSlot??c?.startSection??c?.slot); return Number.isInteger(value)&&value>0?value:1; }
+    function courseEndSlot(c){ const start=courseStartSlot(c); const value=Number(c?.endSlot??c?.endSection??c?.slot); return Number.isInteger(value)&&value>=start?value:start; }
+    function courseCoversSlot(c,slot){ const value=Number(slot); return Number.isInteger(value)&&value>=courseStartSlot(c)&&value<=courseEndSlot(c); }
+    function activeInWeek(c,w){return effectiveCourseWeeks(c).includes(Number(w))}
+    function coursesForWeek(w){return state.courses.filter(c=>activeInWeek(c,w)).sort((a,b)=>(a.day-b.day)||(courseStartSlot(a)-courseStartSlot(b)))}
+    function nowCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&m>=timeToMin(getSlot(courseStartSlot(c)).start)&&m<=timeToMin(getSlot(courseEndSlot(c)).end))||null}
+    function nextCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)>d||(Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m))||null}
+    function soonCourse(now=new Date()){const w=getWeek(now),d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m&&timeToMin(getSlot(courseStartSlot(c)).start)-m<=10)||null}
+    function courseMergeKey(c){ return [c.accountId||'',c.termKey||'',Number(c.day||c.weekday||0),firstCourseText(c.name,c.courseName),courseWeeksFingerprint(c),firstCourseText(c.location,c.room),c.teacher||''].map(normalizeCourseText).join('|'); }
+    function courseExactKey(c){ return `${courseMergeKey(c)}|${courseStartSlot(c)}-${courseEndSlot(c)}`; }
+    // LOGICAL_COURSE_RANGE_HELPERS_START
+    function buildLogicalCourseItems(records=[],options={}){
+      const identityOf=options.identityOf||courseMergeKey;
+      const exactOf=options.exactOf||courseExactKey;
+      const startOf=options.startOf||courseStartSlot;
+      const endOf=options.endOf||courseEndSlot;
+      const exact=new Map();
+      (records||[]).forEach(record=>{ const key=exactOf(record); if(!exact.has(key)) exact.set(key,record); });
+      const buckets=new Map();
+      exact.forEach(record=>{ const key=identityOf(record); if(!buckets.has(key)) buckets.set(key,[]); buckets.get(key).push(record); });
+      const result=[];
+      buckets.forEach((bucket,key)=>{
+        const merged=[];
+        bucket.sort((a,b)=>(startOf(a)-startOf(b))||(endOf(a)-endOf(b)));
+        bucket.forEach(record=>{
+          const startSlot=Number(startOf(record));
+          const endSlot=Math.max(startSlot,Number(endOf(record)));
+          const last=merged[merged.length-1];
+          if(last && startSlot<=last.endSlot+1){
+            last.endSlot=Math.max(last.endSlot,endSlot);
+            last.span=last.endSlot-last.startSlot+1;
+            last.courses.push(record);
+            if(record?.id&&!last.ids.includes(record.id)) last.ids.push(record.id);
+            return;
+          }
+          merged.push({key,course:record,count:1,ids:record?.id?[record.id]:[],courses:[record],startSlot,endSlot,span:endSlot-startSlot+1});
+        });
+        result.push(...merged);
+      });
+      return result.sort((a,b)=>(a.startSlot-b.startSlot)||(a.endSlot-b.endSlot)||String(a.course?.name||'').localeCompare(String(b.course?.name||''),'zh-Hans-CN'));
     }
-    function coursesForCell(day,slot,week){ return state.courses.filter(c=>Number(c.day)===Number(day)&&Number(c.slot)===Number(slot)&&activeInWeek(c,week)); }
+    function buildOverlapComponents(items=[]){
+      const components=[];
+      [...(items||[])].sort((a,b)=>(a.startSlot-b.startSlot)||(a.endSlot-b.endSlot)).forEach(item=>{
+        const last=components[components.length-1];
+        if(!last || item.startSlot>last.endSlot){
+          components.push({startSlot:item.startSlot,endSlot:item.endSlot,items:[item]});
+          return;
+        }
+        last.items.push(item);
+        last.endSlot=Math.max(last.endSlot,item.endSlot);
+      });
+      return components;
+    }
+    // LOGICAL_COURSE_RANGE_HELPERS_END
+    function itemHasVisibleSlot(item,slots=visibleSlots()){ return slots.some(slot=>Number(slot.slot)>=item.startSlot&&Number(slot.slot)<=item.endSlot); }
+    function logicalItemsForDay(day,week,slots=visibleSlots()){
+      const records=state.courses.filter(c=>Number(c.day)===Number(day)&&activeInWeek(c,week));
+      return buildLogicalCourseItems(records).filter(item=>itemHasVisibleSlot(item,slots));
+    }
+    function overlapComponentsForDay(day,week,slots=visibleSlots()){ return buildOverlapComponents(logicalItemsForDay(day,week,slots)); }
+    function visibleRangePlacement(range,slots=visibleSlots()){
+      const indexes=[];
+      slots.forEach((slot,index)=>{ if(Number(slot.slot)>=range.startSlot&&Number(slot.slot)<=range.endSlot) indexes.push(index); });
+      if(!indexes.length) return null;
+      return {startIndex:indexes[0],endIndex:indexes[indexes.length-1],span:indexes[indexes.length-1]-indexes[0]+1};
+    }
+    function groupSameCourses(list){
+      const exact=new Map();
+      (list||[]).forEach(c=>{ const key=courseExactKey(c); if(!exact.has(key)) exact.set(key,c); });
+      const map=new Map();
+      exact.forEach(c=>{ const key=courseMergeKey(c); if(!map.has(key)) map.set(key,{key,course:c,count:1,ids:[],courses:[]}); const g=map.get(key); g.courses.push(c); if(c.id&&!g.ids.includes(c.id)) g.ids.push(c.id); if(courseStartSlot(c)<courseStartSlot(g.course)) g.course=c; });
+      return Array.from(map.values()).sort((a,b)=>(courseStartSlot(a.course)-courseStartSlot(b.course))||String(a.course.name||'').localeCompare(String(b.course.name||''),'zh-Hans-CN'));
+    }
+    function coursesForCell(day,slot,week){ return state.courses.filter(c=>Number(c.day)===Number(day)&&courseCoversSlot(c,slot)&&activeInWeek(c,week)); }
     function groupsForCell(day,slot,week){ return groupSameCourses(coursesForCell(day,slot,week)); }
-    function canSpanNext(group,day,slot,week){ const groups=groupsForCell(day,slot,week); return groups.length===1 && groups[0].key===group.key; }
+    function canSpanNext(group,day,currentSlot,nextSlot,week){ currentSlot=Number(currentSlot); nextSlot=Number(nextSlot); if(nextSlot!==currentSlot+1) return false; const groups=groupsForCell(day,nextSlot,week); return groups.length===1 && groups[0].key===group.key; }
     function groupStatusClass(group,current,soon,week,actualWeek){ if(week!==actualWeek) return ''; const ids=group?.ids||[]; if(current&&ids.includes(current.id)) return 'current'; if(soon&&ids.includes(soon.id)) return 'soon'; return ''; }
-    function buildCourse(c,cls='',opts={}){ const settings=state.courseSettings||DEFAULT_COURSE_SETTINGS; const display=escapeHtml(c.shortName||c.name||''); const teacher=escapeHtml(c.teacher||''); const location=escapeHtml(c.location||''); const classGroup=escapeHtml(c.classGroup||''); const metaParts=[]; if(settings.showTeacher && state.infoMode==='full' && teacher) metaParts.push(teacher); if(settings.showLocation && location) metaParts.push(location); if(settings.showClassGroup && classGroup) metaParts.push(classGroup); const meta=metaParts.join('<br>'); const count=Number(opts.count||0); const span=Number(opts.span||1); const countBadge=count>1?`<div class="merge-count">×${count}</div>`:''; const spanBadge=span>1?`<div class="merge-span">${opts.startSlot||c.slot}-${opts.endSlot||c.slot}节</div>`:''; return `<div class="course ${cls}" data-id="${c.id}" title="${escapeHtml(c.name||'')}" style="background:${STYLE[c.category]||STYLE.custom}">${cls?`<div class="mark">${cls==='current'?'进行中':'即将上课'}</div>`:''}${countBadge}<div class="name">${display}</div><div class="meta2">${meta}</div>${spanBadge}</div>`}
+    function formatCourseCardFields(c,opts={}){
+      const settings=state.courseSettings||DEFAULT_COURSE_SETTINGS;
+      const name=state.infoMode==='full'?firstCourseText(c.name,c.courseName):firstCourseText(c.shortName,c.name,c.courseName);
+      const location=firstCourseText(c.location,c.room);
+      const teacher=firstCourseText(c.teacher);
+      const classGroup=firstCourseText(c.classGroup);
+      const meta=[];
+      if(settings.showLocation && location) meta.push(`<span class="course-field course-location module-location">${escapeHtml(location)}</span>`);
+      if(settings.showTeacher && teacher && (state.infoMode==='full'||state.tableSize==='screenshot')) meta.push(`<span class="course-field course-teacher module-teacher">${escapeHtml(teacher)}</span>`);
+      if(settings.showClassGroup && classGroup) meta.push(`<span class="course-field course-class-group module-class-group">${escapeHtml(classGroup)}</span>`);
+      const start=Number(opts.startSlot??courseStartSlot(c));
+      const end=Number(opts.endSlot??courseEndSlot(c));
+      const section=settings.showSectionRange && end>start?`<div class="course-section">${start}-${end}节</div>`:'';
+      return {name:escapeHtml(name),meta:meta.join(''),section};
+    }
+    function buildCourse(c,cls='',opts={}){ const fields=formatCourseCardFields(c,opts); return `<div class="course ${cls}" data-id="${c.id}" title="${escapeHtml(c.name||'')}" style="background:${STYLE[c.category]||STYLE.custom}">${cls?`<div class="mark">${cls==='current'?'进行中':'即将上课'}</div>`:''}<div class="name">${fields.name}</div>${fields.meta?`<div class="meta2">${fields.meta}</div>`:''}${fields.section}</div>`}
     function fillSelectors(){ $('#courseDay').innerHTML=DAYS.map((d,i)=>`<option value="${i+1}">${d}</option>`).join(''); $('#courseSlot').innerHTML=visibleSlots().map(s=>`<option value="${s.slot}">${s.label}</option>`).join(''); }
     function renderAuthState(loggedIn){
   $('#heroSection')?.classList.add('hidden');
@@ -848,15 +984,29 @@
     function normalizeTableSize(size){return ['classic','screenshot','classroom'].includes(size)?size:'classic';}
     function defaultTableDayWidth(size){
       const mode=normalizeTableSize(size);
-      if(mode==='screenshot') return 42;
+      if(mode==='screenshot') return 38;
       if(mode==='classroom') return 52;
       return 48;
     }
     function defaultTableRowHeight(size){
       const mode=normalizeTableSize(size);
-      if(mode==='screenshot') return 72;
+      if(mode==='screenshot') return 58;
       if(mode==='classroom') return 78;
       return 118;
+    }
+    function defaultTableFontSize(size){ return normalizeTableSize(size)==='classic'?16:10; }
+    function applyMobileCompactDefaults(courseSettings={}){
+      const tableSize='screenshot';
+      state.infoMode=MOBILE_COMPACT_LAYOUT.infoMode;
+      state.layoutCustomized=false;
+      applyTableSize(tableSize,{width:MOBILE_COMPACT_LAYOUT.tableDayWidth,height:MOBILE_COMPACT_LAYOUT.tableRowHeight,fontSize:MOBILE_COMPACT_LAYOUT.tableFontSize});
+      saveCourseSettings({...DEFAULT_COURSE_SETTINGS,...courseSettings,showLocation:true,showTeacher:false,showSectionRange:false,showClassGroup:false},{markCustomized:false});
+    }
+    function applyDesktopDefaultLayout(courseSettings={}){
+      state.infoMode='compact';
+      state.layoutCustomized=false;
+      applyTableSize('classic',{width:48,height:118,fontSize:16});
+      saveCourseSettings({...DEFAULT_COURSE_SETTINGS,...courseSettings,showLocation:true,showTeacher:true,showSectionRange:true,showClassGroup:false},{markCustomized:false});
     }
     function normalizeTableDayWidth(value,size=state.tableSize){
       const n=Number(value);
@@ -868,6 +1018,11 @@
       if(!Number.isFinite(n) || n<=0) return defaultTableRowHeight(size);
       return Math.max(58, Math.min(160, Math.round(n)));
     }
+    function normalizeTableFontSize(value,size=state.tableSize){
+      const n=Number(value);
+      if(!Number.isFinite(n) || n<=0) return defaultTableFontSize(size);
+      return Math.max(9, Math.min(20, Math.round(n)));
+    }
     function tableSizeLabel(size){
       const mode=normalizeTableSize(size);
       return mode==='screenshot'?'一屏截图':(mode==='classroom'?'教室优先':'经典卡片');
@@ -876,16 +1031,21 @@
       state.tableSize=normalizeTableSize(size);
       const hasWidth=Object.prototype.hasOwnProperty.call(opts,'width');
       const hasHeight=Object.prototype.hasOwnProperty.call(opts,'height');
+      const hasFontSize=Object.prototype.hasOwnProperty.call(opts,'fontSize');
       const storedWidth=loadAccountLocal('xiaodeTableDayWidth','');
       const storedHeight=loadAccountLocal('xiaodeTableRowHeight','');
+      const storedFontSize=loadAccountLocal('xiaodeTableFontSize','');
       state.tableDayWidth=normalizeTableDayWidth(hasWidth?opts.width:(storedWidth || defaultTableDayWidth(state.tableSize)), state.tableSize);
       state.tableRowHeight=normalizeTableRowHeight(hasHeight?opts.height:(storedHeight || defaultTableRowHeight(state.tableSize)), state.tableSize);
+      state.tableFontSize=normalizeTableFontSize(hasFontSize?opts.fontSize:(storedFontSize || defaultTableFontSize(state.tableSize)), state.tableSize);
       document.body.dataset.tableSize=state.tableSize;
       document.body.style.setProperty('--xiaode-day-width', `${state.tableDayWidth}px`);
       document.body.style.setProperty('--xiaode-row-height', `${state.tableRowHeight}px`);
+      document.body.style.setProperty('--xiaode-course-font-size', `${state.tableFontSize}px`);
       saveAccountLocal('xiaodeTableSize', state.tableSize);
       saveAccountLocal('xiaodeTableDayWidth', String(state.tableDayWidth));
       saveAccountLocal('xiaodeTableRowHeight', String(state.tableRowHeight));
+      saveAccountLocal('xiaodeTableFontSize', String(state.tableFontSize));
       updateTableSizeTile();
     }
     function updateTableWidthControls(){
@@ -893,10 +1053,14 @@
       const value=$('#tableWidthValue');
       const heightRange=$('#tableHeightRange');
       const heightValue=$('#tableHeightValue');
+      const fontRange=$('#tableFontSizeRange');
+      const fontValue=$('#tableFontSizeValue');
       if(range) range.value=String(state.tableDayWidth);
       if(value) value.textContent=`当前列宽：${state.tableDayWidth}px`;
       if(heightRange) heightRange.value=String(state.tableRowHeight);
       if(heightValue) heightValue.textContent=`当前长度：${state.tableRowHeight}px`;
+      if(fontRange) fontRange.value=String(state.tableFontSize);
+      if(fontValue) fontValue.textContent=`当前字号：${state.tableFontSize}px`;
     }
     function updateTableSizeTile(){
       const mode=normalizeTableSize(state.tableSize);
@@ -905,19 +1069,25 @@
         btn.classList.toggle('is-classroom', mode==='classroom');
         const label=btn.querySelector('b');
         if(label) label.textContent=mode==='classic'?'课表尺寸':tableSizeLabel(mode);
-        btn.title=`当前：${tableSizeLabel(mode)} · 宽 ${state.tableDayWidth}px · 长 ${state.tableRowHeight}px`;
+        btn.title=`当前：${tableSizeLabel(mode)} · 宽 ${state.tableDayWidth}px · 长 ${state.tableRowHeight}px · 字号 ${state.tableFontSize}px`;
       });
       $$('.table-size-option').forEach(btn=>btn.classList.toggle('active', btn.dataset.tableSize===state.tableSize));
       updateTableWidthControls();
     }
     function setTableSize(size){
       const mode=normalizeTableSize(size);
-      applyTableSize(mode,{width:defaultTableDayWidth(mode),height:defaultTableRowHeight(mode)});
+      markLayoutCustomized();
+      applyTableSize(mode,{width:defaultTableDayWidth(mode),height:defaultTableRowHeight(mode),fontSize:defaultTableFontSize(mode)});
+      if(mode==='screenshot'){
+        state.infoMode='compact';
+        saveCourseSettings({...state.courseSettings,showLocation:true,showTeacher:false,showSectionRange:false});
+      }
       renderAll();
       schedulePreferenceSave();
       toast(`已切换：${tableSizeLabel(mode)}模式`);
     }
     function setTableDayWidth(width, silent=false){
+      markLayoutCustomized();
       applyTableSize(state.tableSize,{width});
       renderAll();
       updateTableWidthControls();
@@ -925,11 +1095,20 @@
       if(!silent) toast(`列宽已调到 ${state.tableDayWidth}px`);
     }
     function setTableRowHeight(height, silent=false){
+      markLayoutCustomized();
       applyTableSize(state.tableSize,{height});
       renderAll();
       updateTableWidthControls();
       schedulePreferenceSave();
       if(!silent) toast(`长度已调到 ${state.tableRowHeight}px`);
+    }
+    function setTableFontSize(fontSize, silent=false){
+      markLayoutCustomized();
+      applyTableSize(state.tableSize,{fontSize});
+      renderAll();
+      updateTableWidthControls();
+      schedulePreferenceSave();
+      if(!silent) toast(`字号已调到 ${state.tableFontSize}px`);
     }
     function openTableSizePanel(){
       openModal('课表尺寸', `
@@ -949,12 +1128,19 @@
           <div class="table-width-presets"><span>短</span><span>标准</span><span>长</span></div>
           <div class="secondary-note">长度控制每一节课格子的高度；调短后更容易把整张周课表放进一个屏幕或一张截图。</div>
         </div>
+        <div class="table-length-control">
+          <div class="table-length-head"><b>课程字号</b><span id="tableFontSizeValue">当前字号：${state.tableFontSize}px</span></div>
+          <input id="tableFontSizeRange" type="range" min="9" max="20" step="1" value="${state.tableFontSize}" />
+          <div class="table-width-presets"><span>紧凑</span><span>标准</span><span>大字</span></div>
+        </div>
       `);
       $$('.table-size-option').forEach(btn=>btn.onclick=()=>setTableSize(btn.dataset.tableSize));
       const range=$('#tableWidthRange');
       if(range){ range.oninput=()=>setTableDayWidth(range.value,true); range.onchange=()=>toast(`列宽已调到 ${state.tableDayWidth}px`); }
       const heightRange=$('#tableHeightRange');
       if(heightRange){ heightRange.oninput=()=>setTableRowHeight(heightRange.value,true); heightRange.onchange=()=>toast(`长度已调到 ${state.tableRowHeight}px`); }
+      const fontRange=$('#tableFontSizeRange');
+      if(fontRange){ fontRange.oninput=()=>setTableFontSize(fontRange.value,true); fontRange.onchange=()=>toast(`字号已调到 ${state.tableFontSize}px`); }
       updateTableSizeTile();
     }
     async function switchActiveTerm(termKey){
@@ -986,7 +1172,6 @@
     function renderTable(){
       const now=new Date(), actualWeek=getWeek(now), week=getSelectedWeek(), today=getDayIndex(now);
       const current=nowCourse(now), soon=soonCourse(now), slots=visibleSlots();
-      const occupied=new Set();
       const weekHead=`第${week}周`;
       let html=`<div class="head week-head" style="grid-column:1;grid-row:1">${weekHead}</div>${DAYS.map((d,i)=>{
         const isToday=week===actualWeek&&i+1===today;
@@ -998,52 +1183,36 @@
         html+=`<div class="timecell" style="grid-column:1;grid-row:${row}"><div class="name" style="font-size:19px;color:var(--text)">${slot.slot}</div><div class="muted">${slot.range}</div></div>`;
       });
       for(let day=1; day<=7; day++){
-        for(let slotIdx=0; slotIdx<slots.length; slotIdx++){
-          const slot=slots[slotIdx];
-          const row=slotIdx+2;
-          const occKey=`${day}-${slot.slot}`;
-          if(occupied.has(occKey)) continue;
-          const todayCls=(week===actualWeek&&day===today)?'today':'';
-          const groups=groupsForCell(day,slot.slot,week);
-          if(!groups.length){
-            html+=`<div class="slot ${todayCls} empty-clickable" data-day="${day}" data-slot="${slot.slot}" style="grid-column:${day+1};grid-row:${row}"><div class="empty-slot"></div></div>`;
-            continue;
+        const todayCls=(week===actualWeek&&day===today)?'today':'';
+        const occupiedIndexes=new Set();
+        overlapComponentsForDay(day,week,slots).forEach(component=>{
+          const placement=visibleRangePlacement(component,slots);
+          if(!placement) return;
+          for(let index=placement.startIndex;index<=placement.endIndex;index++) occupiedIndexes.add(index);
+          const row=placement.startIndex+2;
+          if(component.items.length===1){
+            const item=component.items[0];
+            const cls=groupStatusClass(item,current,soon,week,actualWeek);
+            html+=`<div class="slot ${todayCls} merged logical-range-component" style="grid-column:${day+1};grid-row:${row} / span ${placement.span}">${buildCourse(item.course,cls,{span:item.span,startSlot:item.startSlot,endSlot:item.endSlot})}</div>`;
+            return;
           }
-          if(groups.length>1){
-            const stack=groups.map(g=>{ const cls=groupStatusClass(g,current,soon,week,actualWeek); return buildCourse(g.course,cls,{count:g.count}); }).join('');
-            html+=`<div class="slot ${todayCls} stacked" style="grid-column:${day+1};grid-row:${row}">${stack}</div>`;
-            continue;
-          }
-          const g=groups[0];
-          let span=1;
-          while(slotIdx+span<slots.length && canSpanNext(g,day,slots[slotIdx+span].slot,week)){
-            occupied.add(`${day}-${slots[slotIdx+span].slot}`);
-            span++;
-          }
-          const cls=groupStatusClass(g,current,soon,week,actualWeek);
-          html+=`<div class="slot ${todayCls} merged" style="grid-column:${day+1};grid-row:${row} / span ${span}">${buildCourse(g.course,cls,{count:g.count,span,startSlot:slot.slot,endSlot:slots[slotIdx+span-1].slot})}</div>`;
-        }
+          const stack=component.items.map(item=>{
+            const cls=groupStatusClass(item,current,soon,week,actualWeek);
+            return buildCourse(item.course,cls,{span:item.span,startSlot:item.startSlot,endSlot:item.endSlot});
+          }).join('');
+          html+=`<div class="slot ${todayCls} stacked logical-range-component range-conflict" style="grid-column:${day+1};grid-row:${row} / span ${placement.span}">${stack}</div>`;
+        });
+        slots.forEach((slot,slotIdx)=>{
+          if(occupiedIndexes.has(slotIdx)) return;
+          html+=`<div class="slot ${todayCls} empty-clickable" data-day="${day}" data-slot="${slot.slot}" style="grid-column:${day+1};grid-row:${slotIdx+2}"><div class="empty-slot"></div></div>`;
+        });
       }
       $('#table').innerHTML=html;
       bindCourseClicks();
     }
     function mergedDayItems(day,week){
       const slots=visibleSlots();
-      const items=[];
-      for(let slotIdx=0; slotIdx<slots.length; slotIdx++){
-        const slot=slots[slotIdx];
-        const groups=groupsForCell(day,slot.slot,week);
-        if(!groups.length) continue;
-        if(groups.length>1){ groups.forEach(g=>items.push({...g,span:1,startSlot:slot.slot,endSlot:slot.slot})); continue; }
-        const g={...groups[0],span:1,startSlot:slot.slot,endSlot:slot.slot};
-        while(slotIdx+g.span<slots.length && canSpanNext(g,day,slots[slotIdx+g.span].slot,week)){
-          g.endSlot=slots[slotIdx+g.span].slot;
-          g.span++;
-        }
-        slotIdx+=g.span-1;
-        items.push(g);
-      }
-      return items;
+      return logicalItemsForDay(day,week,slots);
     }
     function renderMobile(){ const week=getSelectedWeek(), actualWeek=getWeek(), today=getDayIndex(); $('#mobileList').innerHTML=DAYS.map((d,idx)=>{ const items=mergedDayItems(idx+1,week); return `<section class="card mday"><div class="mday-title">${d}${week===actualWeek&&today===idx+1?' · 今天':''}</div>${items.length?items.map(g=>{ const c=g.course; return `<div style="margin-top:10px">${buildCourse(c,'',{count:g.count,span:g.span,startSlot:g.startSlot,endSlot:g.endSlot})}</div>` }).join(''):'<div class="muted">无课程</div>'}</section>` }).join(''); bindCourseClicks(); }
     function renderSlots(){
@@ -1941,6 +2110,7 @@
         <div class="style-switch-grid" style="margin-top:14px">
           <div class="style-row"><div>是否需要教室模块<small>关闭后课程格子和编辑界面不突出教室。</small></div><button class="btn ghost" id="settingShowLocation">${st.showLocation?'开启':'关闭'}</button></div>
           <div class="style-row"><div>是否需要教师模块<small>关闭后完整模式里不显示老师。</small></div><button class="btn ghost" id="settingShowTeacher">${st.showTeacher?'开启':'关闭'}</button></div>
+          <div class="style-row"><div>是否显示节次范围<small>关闭后课程卡不显示“6-7节”等节次文字，更适合截图。</small></div><button class="btn ghost" id="settingShowSectionRange">${st.showSectionRange?'开启':'关闭'}</button></div>
           <div class="style-row"><div>是否需要班级模块<small>开启后编辑课程可填写班级，课表可显示。</small></div><button class="btn ghost" id="settingShowClassGroup">${st.showClassGroup?'开启':'关闭'}</button></div>
           <div class="style-row"><div>是否需要自定义时间<small>开启后继续使用“课表时间”里的 12 节时间。</small></div><button class="btn ghost" id="settingCustomTime">${st.customTime?'开启':'关闭'}</button></div>
         </div>
@@ -1948,7 +2118,7 @@
       `);
       const temp={...st};
       const bindToggle=(id,key)=>{ const btn=$('#'+id); if(!btn) return; btn.onclick=()=>{ temp[key]=!temp[key]; btn.textContent=temp[key]?'开启':'关闭'; }; };
-      bindToggle('settingShowLocation','showLocation'); bindToggle('settingShowTeacher','showTeacher'); bindToggle('settingShowClassGroup','showClassGroup'); bindToggle('settingCustomTime','customTime');
+      bindToggle('settingShowLocation','showLocation'); bindToggle('settingShowTeacher','showTeacher'); bindToggle('settingShowSectionRange','showSectionRange'); bindToggle('settingShowClassGroup','showClassGroup'); bindToggle('settingCustomTime','customTime');
       $('#saveScheduleSettingsBtn') && ($('#saveScheduleSettingsBtn').onclick=async()=>{
         try{
           const totalWeeksValue=Number($('#settingTotalWeeks')?.value||0);
@@ -1956,7 +2126,12 @@
           const result=await api('/api/my/active-term/settings',{method:'PUT',body:JSON.stringify({totalWeeks:totalWeeksValue,termStart:termStartValue})});
           state.activeTerm=result.activeTerm||state.activeTerm;
           state.availableTerms=(state.availableTerms||[]).map(term=>term.termKey===state.activeTerm?.termKey?state.activeTerm:term);
-          saveCourseSettings({...temp,totalWeeks:'',termStart:'',weekStartDay:($('#settingWeekStartDay')?.value||'1')});
+          const layoutChanged=['showLocation','showTeacher','showSectionRange','showClassGroup','customTime']
+            .some(key=>Boolean(temp[key])!==Boolean(st[key]));
+          saveCourseSettings(
+            {...temp,totalWeeks:'',termStart:'',weekStartDay:($('#settingWeekStartDay')?.value||'1')},
+            {markCustomized:layoutChanged}
+          );
           clampPreviewWeek(); renderAll(); syncWidgetNow('term-settings'); closeModal(); toast('当前学期设置已保存');
         }catch(e){toast(e.message||'学期设置保存失败');}
       });
@@ -1969,7 +2144,7 @@
           <div class="style-row"><div>底部工具栏<small>隐藏后截图和浏览更干净，可在这里恢复。</small></div><button class="btn ghost" id="toggleToolbarStyleBtn">${state.bottomToolbarHidden?'显示':'隐藏'}</button></div>
         </div>
       `);
-      $('#toggleInfoModeBtn') && ($('#toggleInfoModeBtn').onclick=()=>{ state.infoMode=state.infoMode==='full'?'compact':'full'; renderAll(); closeModal(); toast(state.infoMode==='full'?'已显示完整信息':'已切换为简洁信息'); });
+      $('#toggleInfoModeBtn') && ($('#toggleInfoModeBtn').onclick=()=>{ setInfoMode(state.infoMode==='full'?'compact':'full'); closeModal(); toast(state.infoMode==='full'?'已显示完整信息':'已切换为简洁信息'); });
       $('#toggleFifthBtn') && ($('#toggleFifthBtn').onclick=()=>{ setHideFifthSlot(!state.hideFifthSlot); closeModal(); });
       $('#toggleToolbarStyleBtn') && ($('#toggleToolbarStyleBtn').onclick=()=>{ setBottomToolbarHidden(!state.bottomToolbarHidden); closeModal(); });
     }
@@ -2250,7 +2425,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
     $('#prevWeekInline') && ($('#prevWeekInline').onclick=()=>{ state.previewWeek=Math.max(1,getSelectedWeek()-1); renderAll(); });
     $('#thisWeekInline') && ($('#thisWeekInline').onclick=()=>{ state.previewWeek=null; renderAll(); toast('已回到本周'); });
     $('#nextWeekInline') && ($('#nextWeekInline').onclick=()=>{ state.previewWeek=Math.min(totalWeeks(),getSelectedWeek()+1); renderAll(); });
-    $$('.mode .btn').forEach(b=>b.onclick=()=>{ state.infoMode=b.dataset.mode; renderAll(); });
+    $$('.mode .btn').forEach(b=>b.onclick=()=>setInfoMode(b.dataset.mode));
     $('#saveCourseBtn').onclick=async()=>{ try{ const payload={name:$('#courseName').value.trim(),shortName:$('#courseShortName').value.trim(),teacher:$('#courseTeacher').value.trim(),location:$('#courseLocation').value.trim(),classGroup:$('#courseClassGroup').value.trim(),day:Number($('#courseDay').value),slot:Number($('#courseSlot').value),weekText:$('#courseWeekText').value.trim(),oddEven:$('#courseOddEven').value,category:$('#courseCategory').value}; if(state.editingCourse){ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'PUT',body:JSON.stringify(payload)}); } else { await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)}); } await loadMe(); clearCourseForm(); toast('课程已保存到你的课表'); }catch(e){ toast(e.message); } };
     $('#resetCourseBtn').onclick=clearCourseForm;
     $('#deleteCourseBtn').onclick=async()=>{ if(!state.editingCourse) return; if(!confirm(`删除 ${state.editingCourse.name}？`)) return; try{ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'DELETE'}); await loadMe(); clearCourseForm(); toast('已从你的课表删除'); }catch(e){ toast(e.message); } };
@@ -2465,7 +2640,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
       const current = state.user ? nowCourse(now) : null;
       const next = state.user ? nextCourse(now) : null;
       return {
-        version: 3,
+        version: 4,
         accountId: state.accountId,
         activeTermKey: getActiveTerm()?.termKey||'',
         reason: 'web-sync',
@@ -2488,18 +2663,20 @@ $('#helpBtnAuth').onclick = openHelpModal;
         courses: (state.courses || []).map(c => ({
           id: c.id || '',
           termKey: c.termKey || '',
-          name: c.name || '',
+          name: firstCourseText(c.name,c.courseName),
           teacher: c.teacher || '',
-          location: c.location || '',
+          location: firstCourseText(c.location,c.room),
           day: Number(c.day || 1),
-          slot: Number(c.slot || 1),
+          slot: courseStartSlot(c),
+          startSlot: courseStartSlot(c),
+          endSlot: courseEndSlot(c),
           weeks: Array.isArray(c.weeks) ? c.weeks : [],
           weekText: c.weekText || '',
           oddEven: c.oddEven || 'all',
           category: c.category || 'custom'
         })),
-        currentCourse: current ? { name: current.name || '', location: current.location || '', day: current.day, slot: current.slot } : null,
-        nextCourse: next ? { name: next.name || '', location: next.location || '', day: next.day, slot: next.slot } : null
+        currentCourse: current ? { name: firstCourseText(current.name,current.courseName), location: firstCourseText(current.location,current.room), day: current.day, slot: courseStartSlot(current), startSlot: courseStartSlot(current), endSlot: courseEndSlot(current) } : null,
+        nextCourse: next ? { name: firstCourseText(next.name,next.courseName), location: firstCourseText(next.location,next.room), day: next.day, slot: courseStartSlot(next), startSlot: courseStartSlot(next), endSlot: courseEndSlot(next) } : null
       };
     }
     function syncWidgetNow(reason='manual'){

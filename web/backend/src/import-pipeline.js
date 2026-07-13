@@ -371,7 +371,20 @@ function mapCategory(item = {}, name = '') {
 }
 
 function normalizedIdentityText(value = '') {
-  return normalizeText(value).toLocaleLowerCase('zh-CN');
+  return normalizeStoredCourseText(value);
+}
+
+// 已落库的手工课程允许包含尖括号等普通字符；合并身份只规范化空白，不做 HTML 清洗。
+function normalizeStoredCourseText(value = '') {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function firstNonEmptyStoredCourseText(...values) {
+  for (const value of values) {
+    const text = normalizeStoredCourseText(value);
+    if (text) return text;
+  }
+  return '';
 }
 
 function effectiveCourseWeeks(course) {
@@ -383,26 +396,77 @@ function overlap(a = [], b = []) {
   return a.some((value) => right.has(value));
 }
 
+function courseSectionRange(course = {}) {
+  const rawFallback = Number(course.slot ?? course.startSection ?? 0);
+  const fallback = Number.isInteger(rawFallback) && rawFallback >= 1 && rawFallback <= 12 ? rawFallback : 0;
+  const start = Number(course.startSlot ?? course.startSection ?? fallback);
+  const end = Number(course.endSlot ?? course.endSection ?? start);
+  const valid = Number.isInteger(start) && start >= 1 && start <= 12
+    && Number.isInteger(end) && end >= start && end <= 12;
+  const safeStart = Number.isInteger(start) && start >= 1 && start <= 12 ? start : fallback;
+  const safeEnd = Number.isInteger(end) && end >= safeStart && end <= 12 ? end : safeStart;
+  return { startSlot: safeStart, endSlot: safeEnd, valid };
+}
+
+function weeksFingerprint(course) {
+  const effective = effectiveCourseWeeks(course);
+  if (effective.length) return `weeks:${effective.join(',')}`;
+  return `pattern:${normalizeStoredCourseText(course.weekText || course.weekPattern)}|parity:${normalizeStoredCourseText(course.oddEven || 'all')}`;
+}
+
+function normalizeMergeCourse(original = {}, order = 0) {
+  const range = courseSectionRange(original);
+  const parsedWeeks = parseWeeksDetailed(
+    original.weeks,
+    original.weekText || original.weekPattern || '',
+    { maxWeeks: 60 }
+  );
+  const weeks = uniqueSorted(parsedWeeks.baseWeeks || []);
+  const oddEven = original.oddEven || parsedWeeks.oddEven || 'all';
+  return {
+    ...original,
+    day: Number(original.day ?? original.weekday),
+    slot: range.startSlot,
+    startSlot: range.startSlot,
+    endSlot: range.endSlot,
+    name: firstNonEmptyStoredCourseText(original.name, original.courseName),
+    teacher: normalizeStoredCourseText(original.teacher),
+    location: firstNonEmptyStoredCourseText(original.location, original.room),
+    weeks,
+    oddEven,
+    weekText: formatWeekText(weeks, oddEven) || firstNonEmptyStoredCourseText(original.weekText, original.weekPattern),
+    _mergeRangeValid: range.valid,
+    _mergeOrder: order
+  };
+}
+
 function exactFingerprint(course) {
   return [
-    course.accountId || '', course.source || '', course.termKey || '', normalizedIdentityText(course.name),
-    normalizedIdentityText(course.shortName), Number(course.day), Number(course.slot),
-    normalizedIdentityText(course.teacher), normalizedIdentityText(course.location), normalizedIdentityText(course.classGroup),
-    uniqueSorted(course.weeks || []).join(','), course.oddEven || 'all', course.category || 'custom', Boolean(course.isAdjusted)
+    course.accountId || '', course.termKey || '', normalizedIdentityText(course.name),
+    Number(course.day), Number(course.startSlot), Number(course.endSlot), weeksFingerprint(course),
+    normalizedIdentityText(course.location), normalizedIdentityText(course.teacher)
   ].join('|');
 }
 
-function mergeFingerprint(course) {
+function mergeFingerprint(course, options = {}) {
   return [
-    course.accountId || '', course.source || '', course.termKey || '', normalizedIdentityText(course.name),
-    normalizedIdentityText(course.shortName), Number(course.day), Number(course.slot),
-    normalizedIdentityText(course.teacher), normalizedIdentityText(course.location), normalizedIdentityText(course.classGroup),
-    course.oddEven || 'all', course.category || 'custom', Boolean(course.isAdjusted)
+    course.accountId || '', options.separateSources ? (course.source === 'jwxt' ? 'jwxt' : 'non-jwxt') : '', course.termKey || '', normalizedIdentityText(course.name),
+    Number(course.day), weeksFingerprint(course), normalizedIdentityText(course.location), normalizedIdentityText(course.teacher)
   ].join('|');
 }
 
 function scheduleFingerprint(course) {
-  return [course.accountId || '', Number(course.day), Number(course.slot)].join('|');
+  return [course.accountId || '', course.termKey || '', Number(course.day)].join('|');
+}
+
+function rangesTouch(left, right) {
+  return Number(right.startSlot) <= Number(left.endSlot) + 1
+    && Number(right.endSlot) >= Number(left.startSlot) - 1;
+}
+
+function rangesOverlap(left, right) {
+  return Number(left.startSlot) <= Number(right.endSlot)
+    && Number(right.startSlot) <= Number(left.endSlot);
 }
 
 export function mergeCourseRecords(courses = [], options = {}) {
@@ -413,8 +477,23 @@ export function mergeCourseRecords(courses = [], options = {}) {
   const events = [];
   const warnings = [];
 
-  for (const original of courses) {
-    const course = { ...original, weeks: uniqueSorted(original.weeks || []) };
+  const normalized = courses.map((course, index) => normalizeMergeCourse(course, index));
+  const isMergeable = (course) => course.name
+    && Number.isInteger(course.day) && course.day >= 1 && course.day <= 7
+    && course._mergeRangeValid
+    && course.startSlot >= 1 && course.endSlot >= course.startSlot && course.endSlot <= 12;
+  const passthrough = normalized
+    .map((course, index) => ({ course, original: courses[index] }))
+    .filter(({ course }) => !isMergeable(course))
+    .map(({ original }) => original);
+  const prepared = normalized
+    .filter(isMergeable)
+    .sort((a, b) => Number(a.startSlot) - Number(b.startSlot)
+      || Number(a.endSlot) - Number(b.endSlot)
+      || (options.separateSources ? Number(a.source === 'jwxt') - Number(b.source === 'jwxt') : 0)
+      || a._mergeOrder - b._mergeOrder);
+
+  for (const course of prepared) {
     const exactKey = exactFingerprint(course);
     if (exactMap.has(exactKey)) {
       const kept = exactMap.get(exactKey);
@@ -422,40 +501,82 @@ export function mergeCourseRecords(courses = [], options = {}) {
       continue;
     }
 
-    const mergeKey = mergeFingerprint(course);
-    if (identityMap.has(mergeKey)) {
-      const kept = identityMap.get(mergeKey);
-      const before = [...kept.weeks];
-      kept.weeks = uniqueSorted([...kept.weeks, ...course.weeks]);
-      kept.weekText = formatWeekText(kept.weeks, kept.oddEven);
-      events.push({ reasonCode: IMPORT_REASON_CODES.MERGED_SAME_COURSE, keptCandidateId: kept._candidateId || null, mergedCandidateId: course._candidateId || null, keptCourseIndex: merged.indexOf(kept), weeksBefore: before, mergedWeeks: course.weeks, weeksAfter: kept.weeks });
-      exactMap.set(exactFingerprint(kept), kept);
+    const mergeKey = mergeFingerprint(course, options);
+    const sameIdentityRanges = identityMap.get(mergeKey) || [];
+    const touching = sameIdentityRanges.find((kept) => rangesTouch(kept, course));
+    if (touching) {
+      const beforeRange = { startSlot: touching.startSlot, endSlot: touching.endSlot };
+      touching.startSlot = Math.min(touching.startSlot, course.startSlot);
+      touching.endSlot = Math.max(touching.endSlot, course.endSlot);
+      touching.slot = touching.startSlot;
+      events.push({
+        reasonCode: IMPORT_REASON_CODES.MERGED_SAME_COURSE,
+        keptCandidateId: touching._candidateId || null,
+        mergedCandidateId: course._candidateId || null,
+        keptCourseIndex: merged.indexOf(touching),
+        weeksBefore: touching.weeks,
+        mergedWeeks: course.weeks,
+        weeksAfter: touching.weeks,
+        rangeBefore: beforeRange,
+        mergedRange: { startSlot: course.startSlot, endSlot: course.endSlot },
+        rangeAfter: { startSlot: touching.startSlot, endSlot: touching.endSlot }
+      });
+      exactMap.set(exactFingerprint(touching), touching);
       continue;
     }
 
     const scheduled = scheduleMap.get(scheduleFingerprint(course)) || [];
     for (const other of scheduled) {
-      if (!overlap(effectiveCourseWeeks(other), effectiveCourseWeeks(course))) continue;
-      const sameIdentity = mergeFingerprint(other) === mergeKey;
-      if (sameIdentity) continue;
-      const warning = {
+      if (!rangesOverlap(other, course) || !overlap(effectiveCourseWeeks(other), effectiveCourseWeeks(course))) continue;
+      if (mergeFingerprint(other, options) === mergeKey) continue;
+      warnings.push({
         reasonCode: IMPORT_REASON_CODES.CONFLICTING_SCHEDULE,
-        message: '同一星期和节次存在周次重叠但课程指纹不同，已保留两条记录。',
+        message: '同一星期和节次范围存在周次重叠但课程指纹不同，已保留两条记录。',
         candidateIds: [other._candidateId || null, course._candidateId || null].filter(Boolean),
         day: course.day,
-        slot: course.slot
-      };
-      warnings.push(warning);
+        startSlot: Math.max(other.startSlot, course.startSlot),
+        endSlot: Math.min(other.endSlot, course.endSlot)
+      });
     }
 
     merged.push(course);
     exactMap.set(exactKey, course);
-    identityMap.set(mergeKey, course);
+    sameIdentityRanges.push(course);
+    identityMap.set(mergeKey, sameIdentityRanges);
     scheduled.push(course);
     scheduleMap.set(scheduleFingerprint(course), scheduled);
   }
 
-  return { courses: merged, events, warnings };
+  // 分来源合并后可能形成新的跨来源完全重复范围；最终再去重一次，手工记录优先保留。
+  const finalCourses = [];
+  const finalExactMap = new Map();
+  for (const course of merged) {
+    const key = exactFingerprint(course);
+    const existing = finalExactMap.get(key);
+    if (existing) {
+      let kept = existing;
+      let removed = course;
+      if (options.separateSources && existing.source === 'jwxt' && course.source !== 'jwxt') {
+        const index = finalCourses.indexOf(existing);
+        if (index >= 0) finalCourses[index] = course;
+        finalExactMap.set(key, course);
+        kept = course;
+        removed = existing;
+      }
+      events.push({ reasonCode: IMPORT_REASON_CODES.DUPLICATE_EXACT, keptCandidateId: kept._candidateId || null, duplicateCandidateId: removed._candidateId || null, keptCourseIndex: finalCourses.indexOf(kept) });
+      continue;
+    }
+    finalCourses.push(course);
+    finalExactMap.set(key, course);
+  }
+
+  for (const course of finalCourses) {
+    delete course._mergeRangeValid;
+    delete course._mergeOrder;
+  }
+
+  // 旧数据中无法安全判断范围的记录必须原样保留，迁移不能静默删除用户课程。
+  return { courses: [...finalCourses, ...passthrough], events, warnings };
 }
 
 function candidateFieldNames(item) {
@@ -635,37 +756,35 @@ export function analyzeJwxtImport(data, context = {}) {
     }
     const adjusted = /调|tk|adjust/i.test(`${source} ${item.tkbz || ''} ${item.bz || ''} ${name}`);
     const storedName = adjusted && !name.includes('调') ? `【调】${name}` : name;
-    for (const slot of sectionResult.slots) {
-      generated.push({
-        userId: context.userId || '',
-        accountId: context.accountId || '',
-        day: dayResult.day,
-        slot,
-        startSlot: sectionResult.startSlot,
-        endSlot: sectionResult.endSlot,
-        name: storedName,
-        originalName: name,
-        shortName: '',
-        teacher,
-        location,
-        classGroup,
-        weekText: weekResult.normalizedWeekText,
-        weeks: weekResult.baseWeeks,
-        oddEven: weekResult.oddEven,
-        category: mapCategory(item, name),
-        source: 'jwxt',
-        sourceDetail: source,
-        sourceIndex,
-        termKey: String(context.termKey || `${context.accountId || ''}:${context.xnm || ''}:${context.xqm || ''}`),
-        xnm: responseXnm || String(context.xnm || ''),
-        xqm: responseXqm || String(context.xqm || ''),
-        selectedTermLabel: String(context.selectedTermLabel || ''),
-        isAdjusted: adjusted,
-        importTraceId: context.traceId || '',
-        _candidateId: candidateId
-      });
-    }
-    diag.producedCourseCount = sectionResult.slots.length;
+    generated.push({
+      userId: context.userId || '',
+      accountId: context.accountId || '',
+      day: dayResult.day,
+      slot: sectionResult.startSlot,
+      startSlot: sectionResult.startSlot,
+      endSlot: sectionResult.endSlot,
+      name: storedName,
+      originalName: name,
+      shortName: '',
+      teacher,
+      location,
+      classGroup,
+      weekText: weekResult.normalizedWeekText,
+      weeks: weekResult.baseWeeks,
+      oddEven: weekResult.oddEven,
+      category: mapCategory(item, name),
+      source: 'jwxt',
+      sourceDetail: source,
+      sourceIndex,
+      termKey: String(context.termKey || `${context.accountId || ''}:${context.xnm || ''}:${context.xqm || ''}`),
+      xnm: responseXnm || String(context.xnm || ''),
+      xqm: responseXqm || String(context.xqm || ''),
+      selectedTermLabel: String(context.selectedTermLabel || ''),
+      isAdjusted: adjusted,
+      importTraceId: context.traceId || '',
+      _candidateId: candidateId
+    });
+    diag.producedCourseCount = 1;
     diagnostics.push(diag);
   });
 
@@ -694,7 +813,7 @@ export function analyzeJwxtImport(data, context = {}) {
         : IMPORT_REASON_CODES.MERGED_SAME_COURSE;
       diag.humanReadableReason = diag.reasonCode === IMPORT_REASON_CODES.DUPLICATE_EXACT
         ? '与已接收候选完全重复，已去重。'
-        : '与同课程其他周次安全合并。';
+        : '与同一课程的连续节次安全合并。';
     }
   }
 

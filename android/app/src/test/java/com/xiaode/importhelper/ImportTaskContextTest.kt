@@ -59,4 +59,29 @@ class ImportTaskContextTest {
         assertEquals(false, belongsToActiveTerm("account-b:2025:3", "account-a:2025:3"))
         assertEquals(false, belongsToActiveTerm("", "account-a:2025:3"))
     }
+
+    @Test
+    fun widgetCourseRangeUsesNewFieldsAndFallsBackToLegacySlot() {
+        assertEquals(CourseSlotRange(3, 3), normalizeCourseSlotRange(3, null, null))
+        assertEquals(CourseSlotRange(1, 2), normalizeCourseSlotRange(9, 1, 2))
+        assertEquals(CourseSlotRange(4, 6), normalizeCourseSlotRange(4, 6, 4))
+        assertEquals(CourseSlotRange(2, 2), normalizeCourseSlotRange(2, 0, -1))
+        assertEquals(CourseSlotRange(4, 4), normalizeCourseSlotRange(4, 13, 99))
+    }
+
+    @Test
+    fun widgetCourseRangeCoversFromFirstSectionStartThroughLastSectionEnd() {
+        val slots = mapOf(
+            1 to (8 * 60..8 * 60 + 45),
+            2 to (8 * 60 + 55..9 * 60 + 40),
+            3 to (10 * 60..10 * 60 + 45)
+        )
+        val range = courseMinuteRange(CourseSlotRange(1, 2), slots)
+        assertEquals((8 * 60)..(9 * 60 + 40), range)
+        assertEquals(true, range?.contains(9 * 60 + 30))
+        assertEquals(false, range?.contains(10 * 60))
+        assertEquals(null, courseMinuteRange(CourseSlotRange(1, 4), slots))
+        assertEquals("第1-2节", courseSectionLabel(CourseSlotRange(1, 2)))
+        assertEquals("第3节", courseSectionLabel(CourseSlotRange(3, 3)))
+    }
 }

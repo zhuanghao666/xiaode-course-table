@@ -142,8 +142,8 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   assert.equal(imported.data.totalWeeks, 16);
   assert.equal(imported.data.totalWeeksSource, 'course-max-week');
   assert.deepEqual(imported.data.summary, {
-    received: 3, recognized: 3, accepted: 5, filtered: 0, merged: 0, written: 5,
-    beforeCount: 1, afterCount: 5, rawCount: 3, acceptedCount: 3, importedCount: 5,
+    received: 3, recognized: 3, accepted: 3, filtered: 0, merged: 0, written: 3,
+    beforeCount: 1, afterCount: 3, rawCount: 3, acceptedCount: 3, importedCount: 3,
     filteredWrongTermCount: 0, filteredUnknownSourceCount: 0
   });
   assert.equal(imported.data.refreshRequired, true);
@@ -157,7 +157,7 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   assert.ok(disk.courses.some((course) => course.id === 'a-jwxt-other'));
   assert.equal(disk.courses.some((course) => course.id === 'a-jwxt-current'), false);
   assert.deepEqual(disk.courses.filter((course) => course.accountId === 'account-b').map((course) => course.id), ['b-manual']);
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.source === 'jwxt' && course.termKey === 'account-a:2026:12').length, 5);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.source === 'jwxt' && course.termKey === 'account-a:2026:12').length, 3);
   assert.ok(disk.backups.some((backup) => backup.kind === 'pre-import' && backup.accountId === 'account-a' && backup.traceId === imported.data.traceId));
   assert.equal(disk.importCodes.find((item) => item.code === code.data.code).traceId, imported.data.traceId);
 
@@ -175,7 +175,7 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   assert.equal(files.length, 1);
   const persisted = fs.readFileSync(path.join(diagnosticsDir, files[0]), 'utf8');
   assert.doesNotMatch(persisted, /fixture-token|fixture-pass|Cookie|authorization/i);
-  assert.equal(JSON.parse(persisted).importedCount, 5);
+  assert.equal(JSON.parse(persisted).importedCount, 3);
 
   const reused = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixture } });
   assert.equal(reused.status, 409);
@@ -259,9 +259,9 @@ test('replace is isolated by both accountId and selected term', async (t) => {
   })).status, 200);
 
   const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === 'account-a:2026:12' && course.source === 'jwxt').length, 5);
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === 'account-a:2025:3' && course.source === 'jwxt').length, 5);
-  assert.equal(disk.courses.filter((course) => course.accountId === 'account-b' && course.termKey === 'account-b:2025:3' && course.source === 'jwxt').length, 5);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === 'account-a:2026:12' && course.source === 'jwxt').length, 3);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-a' && course.termKey === 'account-a:2025:3' && course.source === 'jwxt').length, 3);
+  assert.equal(disk.courses.filter((course) => course.accountId === 'account-b' && course.termKey === 'account-b:2025:3' && course.source === 'jwxt').length, 3);
   assert.ok(disk.courses.some((course) => course.id === 'a-manual'));
   assert.ok(disk.courses.some((course) => course.id === 'b-manual'));
 });
@@ -290,7 +290,7 @@ test('activeTerm isolates display, strict sources and dynamic week limits per te
   assert.equal(firstImport.data.totalWeeks, 20);
   assert.equal(firstImport.data.totalWeeksSource, 'jwxt-response');
   assert.equal(firstImport.data.activeTerm.termKey, 'account-a:2025:3');
-  assert.equal(firstImport.data.activeTerm.courseCount, 5);
+  assert.equal(firstImport.data.activeTerm.courseCount, 3);
 
   const secondPayload = fixtureForTerm(frozenTerm, '-第二学期');
   secondPayload.totalWeeks = 17;
@@ -357,7 +357,7 @@ test('MySQL failure does not block traced JSON import', async (t) => {
   const code = await createCode(baseUrl);
   const imported = await request(baseUrl, `/api/import-code/${code.data.code}/submit`, { method: 'POST', body: { accountId: 'account-a', replace: true, ...frozenTerm, jwxtData: fixture } });
   assert.equal(imported.status, 200);
-  assert.equal(imported.data.summary.written, 5);
+  assert.equal(imported.data.summary.written, 3);
   await new Promise((resolve) => setTimeout(resolve, 350));
   const health = await request(baseUrl, '/api/health');
   assert.equal(health.data.storage.primary, 'db.json');

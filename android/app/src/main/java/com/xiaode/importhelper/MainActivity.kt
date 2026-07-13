@@ -1439,7 +1439,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildDiagnosticText(currentStatus: String): String = buildString {
-        appendLine("小德课表 App v31 · Web v41 学期隔离与动态周数版")
+        appendLine("小德课表 App v32 · Web v41 移动课表合并与紧凑布局版")
         appendLine("serverUrl=${serverUrl.ifBlank { serverInput.text?.toString() ?: "" }}")
         appendLine("appUrl=${if (::appWebView.isInitialized) appWebView.url else ""}")
         appendLine("importMode=$inImportMode")

@@ -316,6 +316,8 @@ async function ensureTables(conn) {
       account_id VARCHAR(80) NOT NULL,
       day INT,
       slot INT,
+      start_slot INT,
+      end_slot INT,
       name VARCHAR(255) NOT NULL,
       short_name VARCHAR(255),
       teacher VARCHAR(255),
@@ -451,6 +453,8 @@ async function ensureTables(conn) {
   await ensureColumn(conn, 'courses', 'xnm', 'VARCHAR(20) NULL');
   await ensureColumn(conn, 'courses', 'xqm', 'VARCHAR(20) NULL');
   await ensureColumn(conn, 'courses', 'selected_term_label', 'VARCHAR(160) NULL');
+  await ensureColumn(conn, 'courses', 'start_slot', 'INT NULL');
+  await ensureColumn(conn, 'courses', 'end_slot', 'INT NULL');
   await ensureIndex(conn, 'courses', 'idx_courses_account_term', ['account_id', 'term_key']);
 }
 
@@ -533,9 +537,9 @@ async function insertMirrorRows(conn, db) {
 
   for (const c of db.courses || []) {
     await conn.query(
-      `INSERT INTO courses (id, user_id, account_id, day, slot, name, short_name, teacher, location, class_group, week_text, weeks_json, odd_even, category, term_key, xnm, xqm, selected_term_label, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [c.id, c.userId || '', c.accountId || c.userId || '', Number(c.day || 0), Number(c.slot || 0), c.name || '', c.shortName || '', c.teacher || '', c.location || '', c.classGroup || '', c.weekText || '', j(c.weeks || []), c.oddEven || 'all', c.category || 'custom', c.termKey || '', c.xnm || '', c.xqm || '', c.selectedTermLabel || '', j(c)]
+      `INSERT INTO courses (id, user_id, account_id, day, slot, start_slot, end_slot, name, short_name, teacher, location, class_group, week_text, weeks_json, odd_even, category, term_key, xnm, xqm, selected_term_label, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [c.id, c.userId || '', c.accountId || c.userId || '', Number(c.day || 0), Number(c.slot || 0), Number(c.startSlot || c.slot || 0), Number(c.endSlot || c.slot || 0), c.name || '', c.shortName || '', c.teacher || '', c.location || '', c.classGroup || '', c.weekText || '', j(c.weeks || []), c.oddEven || 'all', c.category || 'custom', c.termKey || '', c.xnm || '', c.xqm || '', c.selectedTermLabel || '', j(c)]
     );
   }
 

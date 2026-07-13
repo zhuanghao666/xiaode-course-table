@@ -34,7 +34,8 @@ object WidgetUpdater {
         val teacher: String,
         val location: String,
         val day: Int,
-        val slot: Int,
+        val startSlot: Int,
+        val endSlot: Int,
         val weeks: Set<Int>,
         val oddEven: String
     )
@@ -43,6 +44,7 @@ object WidgetUpdater {
         val status: String,
         val course: Course?,
         val slot: Slot?,
+        val endSlot: Slot?,
         val dayLabel: String,
         val subText: String
     )
@@ -118,13 +120,16 @@ object WidgetUpdater {
             views.setTextViewText(R.id.widgetChip, display.status)
             val course = display.course
             val slot = display.slot
+            val endSlot = display.endSlot ?: slot
             if (course == null || slot == null) {
                 views.setTextViewText(R.id.widgetCourseName, "今天没有下一节课")
                 views.setTextViewText(R.id.widgetMeta1, "第 ${week} 周 · 可以休息一下")
                 views.setTextViewText(R.id.widgetMeta2, display.subText)
             } else {
                 views.setTextViewText(R.id.widgetCourseName, course.name.ifBlank { "未命名课程" })
-                views.setTextViewText(R.id.widgetMeta1, "${display.dayLabel} · ${slot.label} · ${slot.range}")
+                val sectionLabel = courseSectionLabel(CourseSlotRange(course.startSlot, course.endSlot))
+                val timeRange = "${slot.start}-${endSlot?.end ?: slot.end}"
+                views.setTextViewText(R.id.widgetMeta1, "${display.dayLabel} · $sectionLabel · $timeRange")
                 views.setTextViewText(R.id.widgetMeta2, course.location.ifBlank { course.teacher.ifBlank { "地点未填写" } })
             }
             val syncText = if (updatedAt > 0) "同步 ${SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(updatedAt))} · 第 ${week} 周" else "第 ${week} 周"
@@ -166,6 +171,12 @@ object WidgetUpdater {
             val weeksArray = o.optJSONArray("weeks") ?: JSONArray()
             val weeks = mutableSetOf<Int>()
             for (j in 0 until weeksArray.length()) weeks.add(weeksArray.optInt(j))
+            val legacySlot = o.optInt("slot", 1)
+            val range = normalizeCourseSlotRange(
+                legacySlot = legacySlot,
+                startSlot = if (o.has("startSlot")) o.optInt("startSlot", legacySlot) else null,
+                endSlot = if (o.has("endSlot")) o.optInt("endSlot", legacySlot) else null
+            )
             list.add(
                 Course(
                     termKey = termKey,
@@ -173,7 +184,8 @@ object WidgetUpdater {
                     teacher = o.optString("teacher", ""),
                     location = o.optString("location", ""),
                     day = o.optInt("day", 1),
-                    slot = o.optInt("slot", 1),
+                    startSlot = range.startSlot,
+                    endSlot = range.endSlot,
                     weeks = weeks,
                     oddEven = o.optString("oddEven", "all")
                 )
@@ -217,23 +229,34 @@ object WidgetUpdater {
         val today = getDayIndex(now)
         val minuteNow = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
         val thisWeek = courses.filter { activeInWeek(it, currentWeek) }
+        val slotMinutes = slots.mapValues { (_, slot) -> timeToMin(slot.start)..timeToMin(slot.end) }
 
-        val current = thisWeek.firstOrNull { c ->
-            c.day == today && slots[c.slot]?.let { minuteNow in timeToMin(it.start)..timeToMin(it.end) } == true
+        fun minuteRange(course: Course): IntRange? {
+            return courseMinuteRange(CourseSlotRange(course.startSlot, course.endSlot), slotMinutes)
         }
+
+        fun startMinute(course: Course): Int {
+            return minuteRange(course)?.first ?: Int.MAX_VALUE
+        }
+
+        val current = thisWeek
+            .filter { c -> c.day == today && (minuteRange(c)?.contains(minuteNow) == true) }
+            .minByOrNull(::startMinute)
         if (current != null) {
-            val slot = slots[current.slot]
-            return DisplayCourse("上课中", current, slot, DAYS.getOrElse(today - 1) { "今天" }, "正在上课")
+            val slot = slots[current.startSlot]
+            val endSlot = slots[current.endSlot] ?: slot
+            return DisplayCourse("上课中", current, slot, endSlot, DAYS.getOrElse(today - 1) { "今天" }, "正在上课")
         }
 
         val nextToday = thisWeek
-            .filter { c -> c.day == today && (slots[c.slot]?.let { timeToMin(it.start) > minuteNow } == true) }
-            .minByOrNull { c -> timeToMin(slots[c.slot]?.start ?: "23:59") }
+            .filter { c -> c.day == today && startMinute(c) > minuteNow && startMinute(c) != Int.MAX_VALUE }
+            .minByOrNull(::startMinute)
         if (nextToday != null) {
-            val slot = slots[nextToday.slot]
-            val diff = (slot?.let { timeToMin(it.start) - minuteNow } ?: 0)
+            val slot = slots[nextToday.startSlot]
+            val endSlot = slots[nextToday.endSlot] ?: slot
+            val diff = (minuteRange(nextToday)?.first?.minus(minuteNow) ?: 0)
             val status = if (diff in 1..10) "即将上课" else "课间休息"
-            return DisplayCourse(status, nextToday, slot, "今天", "距离下一节约 ${diff} 分钟")
+            return DisplayCourse(status, nextToday, slot, endSlot, "今天", "距离下一节约 ${diff} 分钟")
         }
 
         for (offset in 1..6) {
@@ -241,18 +264,20 @@ object WidgetUpdater {
             val week = currentWeek + ((today - 1 + offset) / 7)
             val candidate = courses
                 .filter { c -> c.day == futureDay && activeInWeek(c, week) }
-                .minByOrNull { c -> timeToMin(slots[c.slot]?.start ?: "23:59") }
+                .filter { startMinute(it) != Int.MAX_VALUE }
+                .minByOrNull(::startMinute)
             if (candidate != null) {
-                val slot = slots[candidate.slot]
+                val slot = slots[candidate.startSlot]
+                val endSlot = slots[candidate.endSlot] ?: slot
                 val label = when (offset) {
                     1 -> "明天"
                     2 -> "后天"
                     else -> DAYS.getOrElse(futureDay - 1) { "之后" }
                 }
-                return DisplayCourse("下一节", candidate, slot, label, "下一次有课：$label")
+                return DisplayCourse("下一节", candidate, slot, endSlot, label, "下一次有课：$label")
             }
         }
 
-        return DisplayCourse("今日结束", null, null, "", "本周后续暂无课程")
+        return DisplayCourse("今日结束", null, null, null, "", "本周后续暂无课程")
     }
 }
