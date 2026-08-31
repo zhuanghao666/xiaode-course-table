@@ -29,7 +29,11 @@ test('unknown termStart remains a preview-only state in Web and Widget', () => {
   assert.doesNotMatch(serverSource, /termStart:\s*analysis\.explicitTermStart/);
   assert.match(serverSource, /termStart 必须是第一教学周的周一/);
   assert.match(serverSource, /termStartStatus:\s*'unknown'/);
-  assert.match(serverSource, /termStartStatus:\s*actualWeek > totalWeeks \? 'after-term' : 'active'/);
+  assert.match(serverSource, /termStartStatus:\s*totalWeeksReliable\s*&&\s*actualWeek > totalWeeks \? 'after-term' : 'active'/);
+  assert.match(frontend, /totalWeeksReliable:getActiveTermTotalWeeksReliable\(\)/);
+  assert.match(termCalendar, /hasReliableEnd\s*&&\s*rawWeek > weeks/);
+  assert.match(widget, /totalWeeksReliable\s*=\s*meta\.has\("totalWeeksReliable"\)/);
+  assert.match(widget, /totalWeeksReliable\s*=\s*totalWeeksReliable/);
 });
 
 test('web reads active term limits and never navigates by global meta totalWeeks', () => {

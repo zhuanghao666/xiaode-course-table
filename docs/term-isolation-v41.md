@@ -22,12 +22,17 @@ termKey = accountId + ":" + xnm + ":" + xqm
 
 每次教务导入按以下顺序确定当前 term 的 `totalWeeks`：
 
-1. 教务响应中的明确总周数字段；
-2. 本次有效课程 weeks 的最大值；
-3. 已保存的 term 总周数；
-4. 默认 20 周。
+1. 用户已经手工确认的当前 term 总周数；
+2. 经过脱敏真实响应验证、且位于严格根路径白名单中的教务字段（目前没有）；
+3. 本次有效课程 `weeks` 的最大值，作为“课程最晚排到第几周”的下界；
+4. 已保存的 term 值；
+5. 默认 20 周。
 
-如果来自课程最大周次，诊断返回 `totalWeeksSource=course-max-week`。用户可在“课表设置”里手工修改当前学期的总周数和开学日期，修改不会影响其他学期。
+`zxs` 的语义是课程总学时，真实值可能为 48、54，不能当作总教学周数。解析器不再递归匹配 `zxs/xqzcs/maxWeek/weekCount/totalWeeks` 等模糊字段；遇到这些未验证字段只记录 `UNTRUSTED_TOTAL_WEEKS_FIELD` 警告，不自动采用。
+
+如果来自课程最大周次，诊断返回 `totalWeeksSource=course-max-week`，同时 `totalWeeksReliable=false`。课程最大周次和默认值只负责预览范围，不能单独触发 `after-term`；只有用户手工确认值或未来经过验证的精确白名单字段才是可靠结束边界。用户可在“课表设置”里手工修改当前学期的总周数和开学日期，修改不会影响其他学期，并且再次导入不会覆盖手工值。
+
+v41 早期保存为 `totalWeeksSource=jwxt-response` 的值无法证明来自哪个原始字段。读取旧数据时会将其降级为该 term 的课程最大周次（无课程周次时为默认值），并记录 `TOTAL_WEEKS_SOURCE_DOWNGRADED` 迁移警告；真实 `db.json` 仍只会在正常业务写入时原子落盘。
 
 ## 历史混合数据的安全处理
 

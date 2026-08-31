@@ -83,10 +83,10 @@ function seedDb() {
   };
 }
 
-async function launch(t, extraEnv = {}) {
+async function launch(t, extraEnv = {}, initialDb = seedDb()) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xiaode-import-api-'));
   const dataFile = path.join(root, 'db.json');
-  fs.writeFileSync(dataFile, JSON.stringify(seedDb(), null, 2), 'utf8');
+  fs.writeFileSync(dataFile, JSON.stringify(initialDb, null, 2), 'utf8');
   const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const output = [];
@@ -127,6 +127,38 @@ function fixtureForTerm(term, suffix = '') {
   return cloned;
 }
 
+test('legacy jwxt-response total weeks is downgraded and cannot end a term until confirmed', async (t) => {
+  const initialDb = seedDb();
+  initialDb.accounts.find((account) => account.id === 'account-a').activeTermKey = 'account-a:2026:12';
+  initialDb.terms = [{
+    id: 'term-untrusted-weeks',
+    userId: 'user-a',
+    accountId: 'account-a',
+    termKey: 'account-a:2026:12',
+    xnm: '2026',
+    xqm: '12',
+    selectedTermLabel: '2026-2027 第二学期',
+    termStart: '2020-09-07',
+    totalWeeks: 48,
+    totalWeeksSource: 'jwxt-response'
+  }];
+  const { baseUrl } = await launch(t, {}, initialDb);
+
+  const me = await request(baseUrl, '/api/auth/me', { token: 'fixture-token-a' });
+  assert.equal(me.status, 200);
+  assert.equal(me.data.activeTerm.totalWeeks, 1);
+  assert.equal(me.data.activeTerm.totalWeeksSource, 'course-max-week');
+  assert.equal(me.data.activeTerm.totalWeeksReliable, false);
+  assert.equal(me.data.activeTerm.termStartStatus, 'active');
+
+  const confirmed = await request(baseUrl, '/api/my/active-term/settings', {
+    token: 'fixture-token-a', method: 'PUT', body: { totalWeeks: 1, termStart: '2020-09-07' }
+  });
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.data.activeTerm.totalWeeksReliable, true);
+  assert.equal(confirmed.data.activeTerm.termStartStatus, 'after-term');
+});
+
 test('replace is atomic, account scoped, term scoped and preserves manual courses', async (t) => {
   const { baseUrl, dataFile, root } = await launch(t, { XIAODE_IMPORT_DIAGNOSTICS: '1', XIAODE_IMPORT_DIAGNOSTICS_KEEP: '20' });
   const code = await createCode(baseUrl);
@@ -141,6 +173,7 @@ test('replace is atomic, account scoped, term scoped and preserves manual course
   assert.ok(imported.data.traceId.startsWith('imp_'));
   assert.equal(imported.data.totalWeeks, 16);
   assert.equal(imported.data.totalWeeksSource, 'course-max-week');
+  assert.equal(imported.data.totalWeeksReliable, false);
   assert.deepEqual(imported.data.summary, {
     received: 3, recognized: 3, accepted: 3, filtered: 0, merged: 0, written: 3,
     beforeCount: 1, afterCount: 3, rawCount: 3, acceptedCount: 3, importedCount: 3,
@@ -287,13 +320,16 @@ test('activeTerm isolates display, strict sources and dynamic week limits per te
   assert.equal(firstImport.data.summary.filteredWrongTermCount, 1);
   assert.equal(firstImport.data.summary.filteredUnknownSourceCount, 1);
   assert.equal(firstImport.data.summary.rawCount, 5);
-  assert.equal(firstImport.data.totalWeeks, 20);
-  assert.equal(firstImport.data.totalWeeksSource, 'jwxt-response');
+  assert.equal(firstImport.data.totalWeeks, 16);
+  assert.equal(firstImport.data.totalWeeksSource, 'course-max-week');
+  assert.equal(firstImport.data.totalWeeksReliable, false);
+  assert.ok(firstImport.data.warnings.some((warning) => warning.reasonCode === 'UNTRUSTED_TOTAL_WEEKS_FIELD'));
   assert.equal(firstImport.data.activeTerm.termKey, 'account-a:2025:3');
   assert.equal(firstImport.data.activeTerm.courseCount, 3);
 
   const secondPayload = fixtureForTerm(frozenTerm, '-第二学期');
-  secondPayload.totalWeeks = 17;
+  secondPayload.totalWeeks = 54;
+  secondPayload.kbList[0].zcd = '1-17周';
   const secondCode = await createCode(baseUrl, 'fixture-token-a', true, frozenTerm);
   const secondImport = await request(baseUrl, `/api/import-code/${secondCode.data.code}/submit`, {
     method: 'POST',
@@ -301,6 +337,8 @@ test('activeTerm isolates display, strict sources and dynamic week limits per te
   });
   assert.equal(secondImport.status, 200);
   assert.equal(secondImport.data.totalWeeks, 17);
+  assert.equal(secondImport.data.totalWeeksSource, 'course-max-week');
+  assert.equal(secondImport.data.totalWeeksReliable, false);
 
   const activeSecond = await request(baseUrl, '/api/auth/me', { token: 'fixture-token-a' });
   assert.equal(activeSecond.data.activeTerm.termKey, 'account-a:2026:12');
@@ -312,7 +350,7 @@ test('activeTerm isolates display, strict sources and dynamic week limits per te
     token: 'fixture-token-a', method: 'PUT', body: { termKey: 'account-a:2025:3' }
   });
   assert.equal(switchedFirst.status, 200);
-  assert.equal(switchedFirst.data.activeTerm.totalWeeks, 20);
+  assert.equal(switchedFirst.data.activeTerm.totalWeeks, 16);
   const activeFirst = await request(baseUrl, '/api/auth/me', { token: 'fixture-token-a' });
   assert.ok(activeFirst.data.courses.every((course) => course.termKey === 'account-a:2025:3' && course.name.endsWith('-第一学期')));
   assert.equal(activeFirst.data.courses.some((course) => course.name.includes('第二学期')), false);
@@ -322,6 +360,7 @@ test('activeTerm isolates display, strict sources and dynamic week limits per te
   });
   assert.equal(manualWeeks.status, 200);
   assert.equal(manualWeeks.data.activeTerm.totalWeeksSource, 'manual');
+  assert.equal(manualWeeks.data.activeTerm.totalWeeksReliable, true);
   assert.equal(manualWeeks.data.activeTerm.termStart, '2025-09-01');
 
   const diskBeforeReplace = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
@@ -331,9 +370,13 @@ test('activeTerm isolates display, strict sources and dynamic week limits per te
   const replaceFirstCode = await createCode(baseUrl, 'fixture-token-a', true, firstTerm);
   const replacement = fixtureForTerm(firstTerm, '-第一学期新版');
   replacement.totalWeeks = 20;
-  assert.equal((await request(baseUrl, `/api/import-code/${replaceFirstCode.data.code}/submit`, {
+  const replacedFirst = await request(baseUrl, `/api/import-code/${replaceFirstCode.data.code}/submit`, {
     method: 'POST', body: { accountId: 'account-a', replace: true, ...firstTerm, jwxtData: replacement }
-  })).status, 200);
+  });
+  assert.equal(replacedFirst.status, 200);
+  assert.equal(replacedFirst.data.totalWeeks, 20);
+  assert.equal(replacedFirst.data.totalWeeksSource, 'manual');
+  assert.equal(replacedFirst.data.totalWeeksReliable, true);
   const diskAfterReplace = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
   assert.deepEqual(diskAfterReplace.courses.filter((course) => course.termKey === 'account-a:2026:12').map((course) => course.id).sort(), secondIds);
   assert.ok(diskAfterReplace.courses.filter((course) => course.termKey === 'account-a:2025:3').every((course) => course.name.endsWith('新版')));

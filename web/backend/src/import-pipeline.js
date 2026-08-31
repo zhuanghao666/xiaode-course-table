@@ -20,6 +20,7 @@ export const IMPORT_REASON_CODES = Object.freeze({
   TERM_RESPONSE_MISMATCH: 'TERM_RESPONSE_MISMATCH',
   FILTERED_WRONG_TERM: 'FILTERED_WRONG_TERM',
   FILTERED_UNKNOWN_SOURCE: 'FILTERED_UNKNOWN_SOURCE',
+  UNTRUSTED_TOTAL_WEEKS_FIELD: 'UNTRUSTED_TOTAL_WEEKS_FIELD',
   UNKNOWN: 'UNKNOWN'
 });
 
@@ -51,7 +52,11 @@ const ALLOWED_COURSE_ARRAYS = new Map([
   ['temporarycourselist', 'temporaryCourseList'],
   ['extracourselist', 'extraCourseList']
 ]);
-const TOTAL_WEEKS_KEYS = new Set(['totalweeks', 'xqzcs', 'zxs', 'maxweek', 'weekcount']);
+// 真实 JWXT 响应目前没有经过验证的“学期总教学周数”字段。
+// 这里故意保持空白；只有拿到脱敏真实响应并确认字段语义和所在层级后，才能新增精确根字段。
+// zxs 是课程总学时（常见值 48/54），绝不能作为 totalWeeks。
+const VERIFIED_TOTAL_WEEKS_ROOT_KEYS = new Set([]);
+const UNTRUSTED_TOTAL_WEEKS_KEYS = new Set(['totalweeks', 'xqzcs', 'zxs', 'maxweek', 'weekcount']);
 const TERM_START_KEYS = new Set(['termstart', 'xqksrq', 'startdate', 'semesterstartdate']);
 const SENSITIVE_FIELD_NAME = /password|passwd|pwd|cookie|token|authorization|student|studentid|xh|xuehao|sfzh|idcard/i;
 
@@ -713,8 +718,23 @@ function itemMatchesRequestedTerm(item, context) {
 function extractScheduleMetadata(data, context = {}) {
   const maxDepth = Math.max(1, Math.min(8, Number(context.maxDepth || 5)));
   const visited = new Set();
-  const totalWeeksValues = [];
+  const ignoredTotalWeeksFields = new Set();
   const termStarts = [];
+
+  // 总周数只允许从经过真实响应验证的根字段读取，禁止递归猜测同名或缩写字段。
+  let explicitTotalWeeks = null;
+  let explicitTotalWeeksField = '';
+  if (data && typeof data === 'object' && !Array.isArray(data) && itemMatchesRequestedTerm(data, context).matches) {
+    for (const key of VERIFIED_TOTAL_WEEKS_ROOT_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+      const weeks = Number(data[key]);
+      if (Number.isInteger(weeks) && weeks >= 1 && weeks <= 30) {
+        explicitTotalWeeks = weeks;
+        explicitTotalWeeksField = key;
+        break;
+      }
+    }
+  }
 
   const walk = (node, depth = 0) => {
     if (node === null || node === undefined || depth > maxDepth) return;
@@ -732,10 +752,7 @@ function extractScheduleMetadata(data, context = {}) {
     const belongsToRequestedTerm = itemMatchesRequestedTerm(node, context).matches;
     for (const [key, value] of Object.entries(node)) {
       const normalizedKey = String(key).toLowerCase();
-      if (belongsToRequestedTerm && TOTAL_WEEKS_KEYS.has(normalizedKey)) {
-        const weeks = Number(value);
-        if (Number.isInteger(weeks) && weeks >= 1 && weeks <= 60) totalWeeksValues.push(weeks);
-      }
+      if (belongsToRequestedTerm && UNTRUSTED_TOTAL_WEEKS_KEYS.has(normalizedKey)) ignoredTotalWeeksFields.add(normalizedKey);
       if (belongsToRequestedTerm && TERM_START_KEYS.has(normalizedKey)) {
         const text = normalizeText(value);
         const match = text.match(/^(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})$/);
@@ -747,7 +764,9 @@ function extractScheduleMetadata(data, context = {}) {
 
   walk(data);
   return {
-    explicitTotalWeeks: totalWeeksValues.length ? Math.max(...totalWeeksValues) : null,
+    explicitTotalWeeks,
+    explicitTotalWeeksField,
+    ignoredTotalWeeksFields: [...ignoredTotalWeeksFields].sort(),
     explicitTermStart: termStarts[0] || ''
   };
 }
@@ -769,6 +788,13 @@ export function analyzeJwxtImport(data, context = {}) {
   const acceptedResponseTermCounts = new Map();
   let incompleteResponseTermCount = 0;
   const scheduleMetadata = extractScheduleMetadata(data, context);
+  if (scheduleMetadata.ignoredTotalWeeksFields.length) {
+    const fields = scheduleMetadata.ignoredTotalWeeksFields.join('、');
+    warnings.push({
+      reasonCode: IMPORT_REASON_CODES.UNTRUSTED_TOTAL_WEEKS_FIELD,
+      message: `已忽略未经真实响应验证的总周数字段：${fields}；将使用已确认的手工设置或课程最晚周次。`
+    });
+  }
 
   collected.candidates.forEach(({ item, source, sourceIndex }, index) => {
     const candidateId = `candidate-${index + 1}`;
@@ -951,6 +977,8 @@ export function analyzeJwxtImport(data, context = {}) {
     acceptedResponseTerms,
     incompleteResponseTermCount,
     explicitTotalWeeks: scheduleMetadata.explicitTotalWeeks,
+    explicitTotalWeeksField: scheduleMetadata.explicitTotalWeeksField,
+    ignoredTotalWeeksFields: scheduleMetadata.ignoredTotalWeeksFields,
     explicitTermStart: scheduleMetadata.explicitTermStart,
     timings: {
       collectionMs,

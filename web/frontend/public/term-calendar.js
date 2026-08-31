@@ -45,13 +45,14 @@
     return date.getDay() === 0 ? 7 : date.getDay();
   }
 
-  function getTermCalendarState({ today = new Date(), termStart = '', totalWeeks = 20, displayedWeek = null } = {}) {
+  function getTermCalendarState({ today = new Date(), termStart = '', totalWeeks = 20, totalWeeksReliable = true, displayedWeek = null } = {}) {
     const normalizedToday = localDate(today) || localDate(new Date());
     const start = validTermStart(termStart);
     const weeks = normalizeTotalWeeks(totalWeeks);
     const requested = Number(displayedWeek);
-    const hasRequested = Number.isInteger(requested) && requested >= 1;
-    const preview = (fallback) => Math.max(1, Math.min(weeks, hasRequested ? requested : fallback));
+    const hasRequested = Number.isInteger(requested) && requested >= 1 && requested <= 60;
+    const hasReliableEnd = totalWeeksReliable === true;
+    const preview = (fallback, limit = weeks) => Math.max(1, Math.min(limit, hasRequested ? requested : fallback));
 
     if (!start) {
       return {
@@ -59,6 +60,8 @@
         actualWeek: null,
         displayedWeek: preview(1),
         totalWeeks: weeks,
+        totalWeeksReliable: hasReliableEnd,
+        displayLimitWeeks: weeks,
         termStartDate: null,
         displayedWeekStart: null,
         displayedWeekEnd: null,
@@ -73,9 +76,12 @@
     const startOrdinal = localDayOrdinal(start);
     const daysSinceStart = todayOrdinal - startOrdinal;
     const rawWeek = Math.floor(daysSinceStart / 7) + 1;
-    const status = daysSinceStart < 0 ? 'before-term' : (rawWeek > weeks ? 'after-term' : 'active');
+    const status = daysSinceStart < 0 ? 'before-term' : (hasReliableEnd && rawWeek > weeks ? 'after-term' : 'active');
     const actualWeek = status === 'before-term' ? 0 : rawWeek;
-    const displayed = preview(status === 'before-term' ? 1 : (status === 'after-term' ? weeks : rawWeek));
+    const displayLimitWeeks = status === 'before-term' || hasReliableEnd
+      ? weeks
+      : Math.max(weeks, rawWeek, hasRequested ? requested : 1);
+    const displayed = preview(status === 'before-term' ? 1 : (status === 'after-term' ? weeks : rawWeek), displayLimitWeeks);
     const displayedWeekStart = addLocalDays(start, (displayed - 1) * 7);
     const displayedWeekEnd = addLocalDays(displayedWeekStart, 6);
     const todayInDisplayedWeek = status === 'active' && displayed === actualWeek;
@@ -86,6 +92,8 @@
       actualWeek,
       displayedWeek: displayed,
       totalWeeks: weeks,
+      totalWeeksReliable: hasReliableEnd,
+      displayLimitWeeks,
       termStartDate: start,
       displayedWeekStart,
       displayedWeekEnd,

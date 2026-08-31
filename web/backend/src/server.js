@@ -22,8 +22,9 @@ const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FIL
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
 const APP_VERSION = 'v41-dev';
-const DB_SCHEMA_VERSION = 6;
+const DB_SCHEMA_VERSION = 7;
 const DEFAULT_TOTAL_WEEKS = 20;
+const RELIABLE_TOTAL_WEEKS_SOURCES = new Set(['manual', 'legacy-account-setting']);
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
 const MYSQL_MIRROR_ENABLED = STORAGE_DRIVER === 'mysql';
 const importDiagnosticsStore = createImportDiagnosticsStore({ dataFile: DATA_FILE });
@@ -232,6 +233,11 @@ function normalizeTotalWeeks(value, fallback = DEFAULT_TOTAL_WEEKS) {
   return weeks;
 }
 
+function isReliableTotalWeeksSource(value = '') {
+  const source = String(value || '').trim();
+  return RELIABLE_TOTAL_WEEKS_SOURCES.has(source) || source.startsWith('jwxt-verified:');
+}
+
 function normalizeDateText(value = '') {
   const text = String(value || '').trim();
   const match = text.match(/^(20\d{2})-(\d{2})-(\d{2})$/);
@@ -253,14 +259,15 @@ function isMondayTermStart(value = '') {
 function termCalendarSnapshot(term, now = new Date()) {
   const termStart = normalizeDateText(term?.termStart);
   const totalWeeks = normalizeTotalWeeks(term?.totalWeeks);
-  if (!termStart || !isMondayTermStart(termStart)) return { termStartStatus: 'unknown', actualWeek: null };
+  const totalWeeksReliable = isReliableTotalWeeksSource(term?.totalWeeksSource);
+  if (!termStart || !isMondayTermStart(termStart)) return { termStartStatus: 'unknown', actualWeek: null, totalWeeksReliable };
   const [year, month, day] = termStart.split('-').map(Number);
   const startOrdinal = Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
   const todayOrdinal = Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86_400_000);
   const diffDays = todayOrdinal - startOrdinal;
-  if (diffDays < 0) return { termStartStatus: 'before-term', actualWeek: 0 };
+  if (diffDays < 0) return { termStartStatus: 'before-term', actualWeek: 0, totalWeeksReliable };
   const actualWeek = Math.floor(diffDays / 7) + 1;
-  return { termStartStatus: actualWeek > totalWeeks ? 'after-term' : 'active', actualWeek };
+  return { termStartStatus: totalWeeksReliable && actualWeek > totalWeeks ? 'after-term' : 'active', actualWeek, totalWeeksReliable };
 }
 
 function normalizeLegacyCourseTerm(course, accountId) {
@@ -446,6 +453,12 @@ function migrateDbToV38(input = {}) {
   }
   db.courses = [...consolidatedCourses, ...unresolvedCourses];
 
+  const courseMaxWeeksByTerm = new Map();
+  for (const course of scopedCourses) {
+    const maxCourseWeek = Math.max(0, ...(Array.isArray(course.weeks) ? course.weeks.map(Number).filter(Number.isFinite) : []));
+    if (maxCourseWeek > (courseMaxWeeksByTerm.get(course.termKey) || 0)) courseMaxWeeksByTerm.set(course.termKey, maxCourseWeek);
+  }
+
   const termMap = new Map();
   for (const rawTerm of db.terms) {
     if (!rawTerm || typeof rawTerm !== 'object') continue;
@@ -455,6 +468,23 @@ function migrateDbToV38(input = {}) {
     const xnm = String(rawTerm.xnm || '').trim();
     const xqm = String(rawTerm.xqm || '').trim();
     const termKey = xnm && xqm ? buildTermKey(accountId, xnm, xqm) : legacyTermKey(accountId);
+    let totalWeeks = normalizeTotalWeeks(rawTerm.totalWeeks);
+    let totalWeeksSource = String(rawTerm.totalWeeksSource || 'saved').trim() || 'saved';
+    // v41 早期把课程字段 zxs（总学时）递归误判为学期总周数，旧 jwxt-response 无法证明具体字段来源。
+    // 一律降级到该学期课程最晚周次；没有课程周次时使用默认值，并保持“不可靠”语义。
+    if (totalWeeksSource === 'jwxt-response') {
+      const courseMaxWeek = courseMaxWeeksByTerm.get(termKey) || 0;
+      totalWeeks = courseMaxWeek ? normalizeTotalWeeks(courseMaxWeek) : DEFAULT_TOTAL_WEEKS;
+      totalWeeksSource = courseMaxWeek ? 'course-max-week' : 'default';
+      const termId = String(rawTerm.id || `term_${crypto.createHash('sha1').update(termKey).digest('hex').slice(0, 16)}`);
+      const warning = {
+        code: 'TOTAL_WEEKS_SOURCE_DOWNGRADED',
+        entityType: 'term',
+        id: termId,
+        message: '旧版教务响应总周数来源无法验证，已回退为课程最晚周次或默认值，请在课表设置中确认。'
+      };
+      migrationWarnings.set(`${warning.code}:term:${warning.id}`, warning);
+    }
     termMap.set(termKey, {
       id: String(rawTerm.id || `term_${crypto.createHash('sha1').update(termKey).digest('hex').slice(0, 16)}`),
       userId,
@@ -464,8 +494,8 @@ function migrateDbToV38(input = {}) {
       xqm,
       selectedTermLabel: String(rawTerm.selectedTermLabel || rawTerm.label || (xnm && xqm ? `${xnm}/${xqm}` : '历史课程')).trim(),
       termStart: normalizeDateText(rawTerm.termStart),
-      totalWeeks: normalizeTotalWeeks(rawTerm.totalWeeks),
-      totalWeeksSource: String(rawTerm.totalWeeksSource || 'saved').trim() || 'saved',
+      totalWeeks,
+      totalWeeksSource,
       createdAt: rawTerm.createdAt || now,
       updatedAt: rawTerm.updatedAt || now
     });
@@ -604,6 +634,7 @@ function publicTerm(db, term) {
     actualWeek: calendar.actualWeek,
     totalWeeks: normalizeTotalWeeks(term.totalWeeks),
     totalWeeksSource: term.totalWeeksSource || 'saved',
+    totalWeeksReliable: calendar.totalWeeksReliable,
     courseCount: coursesForAccount(db, term.accountId, term.termKey).length
   };
 }
@@ -1367,9 +1398,13 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
   const courseMaxWeek = Math.max(0, ...analysis.courses.flatMap((course) => Array.isArray(course.weeks) ? course.weeks.map(Number).filter(Number.isFinite) : []));
   let totalWeeks = DEFAULT_TOTAL_WEEKS;
   let totalWeeksSource = 'default';
-  if (analysis.explicitTotalWeeks) {
+  if (existingTerm?.totalWeeks && isReliableTotalWeeksSource(existingTerm.totalWeeksSource)) {
+    // 用户确认值优先于再次导入得到的课程下界，避免重导后悄悄覆盖手工设置。
+    totalWeeks = normalizeTotalWeeks(existingTerm.totalWeeks);
+    totalWeeksSource = existingTerm.totalWeeksSource;
+  } else if (analysis.explicitTotalWeeks && analysis.explicitTotalWeeksField) {
     totalWeeks = normalizeTotalWeeks(analysis.explicitTotalWeeks);
-    totalWeeksSource = 'jwxt-response';
+    totalWeeksSource = `jwxt-verified:${analysis.explicitTotalWeeksField}`;
   } else if (courseMaxWeek) {
     totalWeeks = normalizeTotalWeeks(courseMaxWeek);
     totalWeeksSource = 'course-max-week';
@@ -1485,6 +1520,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     importedCount: normalized.length,
     totalWeeks,
     totalWeeksSource,
+    totalWeeksReliable: isReliableTotalWeeksSource(totalWeeksSource),
     termStart: savedTerm.termStart,
     mergeEvents: [...analysis.mergeEvents, ...appendMergeEvents],
     timings: { ...analysis.timings, writeMs: Number(writeMs.toFixed(3)) }
@@ -1502,6 +1538,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
       activeTerm: publicTerm(nextDb, savedTerm),
       totalWeeks,
       totalWeeksSource,
+      totalWeeksReliable: isReliableTotalWeeksSource(totalWeeksSource),
       termStart: savedTerm.termStart,
       refreshRequired: true,
       count: summary.written,
@@ -1972,6 +2009,7 @@ app.get('/api/my/import-diagnostics/latest', requireLogin, (req, res) => {
       importedCount: trace.importedCount || trace.summary?.importedCount || 0,
       totalWeeks: trace.totalWeeks || 0,
       totalWeeksSource: trace.totalWeeksSource || '',
+      totalWeeksReliable: Boolean(trace.totalWeeksReliable),
       termStart: trace.termStart || '',
       timings: trace.timings || {}
     }

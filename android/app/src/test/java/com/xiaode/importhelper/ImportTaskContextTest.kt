@@ -142,6 +142,17 @@ class ImportTaskContextTest {
         assertEquals(TermCalendarStatus.AFTER_TERM, after.status)
         assertEquals(20, after.displayedWeek)
         assertEquals(false, after.todayInDisplayedWeek)
+
+        val uncertainEnd = getTermCalendarState(
+            "2026-09-07",
+            16,
+            localDate(2027, 1, 25),
+            totalWeeksReliable = false
+        )
+        assertEquals(TermCalendarStatus.ACTIVE, uncertainEnd.status)
+        assertEquals(21, uncertainEnd.actualWeek)
+        assertEquals(21, uncertainEnd.displayedWeek)
+        assertEquals(true, uncertainEnd.todayInDisplayedWeek)
     }
 
     @Test

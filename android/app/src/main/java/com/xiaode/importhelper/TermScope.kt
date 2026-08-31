@@ -57,20 +57,22 @@ internal fun getTermCalendarState(
     termStart: String,
     totalWeeks: Int,
     today: Calendar,
-    requestedDisplayedWeek: Int? = null
+    requestedDisplayedWeek: Int? = null,
+    totalWeeksReliable: Boolean = true
 ): TermCalendarState {
     val safeTotalWeeks = totalWeeks.coerceIn(1, 60)
     val todayDayIndex = if (today.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY) 7 else today.get(Calendar.DAY_OF_WEEK) - 1
-    val requested = requestedDisplayedWeek?.coerceIn(1, safeTotalWeeks)
+    val requested = requestedDisplayedWeek?.coerceIn(1, 60)
+    val requestedWithinKnownLimit = requested?.coerceAtMost(safeTotalWeeks)
     val startOrdinal = termStartDayOrdinal(termStart)
-        ?: return TermCalendarState(TermCalendarStatus.UNKNOWN, null, requested ?: 1, false, todayDayIndex)
+        ?: return TermCalendarState(TermCalendarStatus.UNKNOWN, null, requestedWithinKnownLimit ?: 1, false, todayDayIndex)
     val todayOrdinal = calendarDayOrdinal(today)
     val diffDays = (todayOrdinal - startOrdinal).toInt()
     if (diffDays < 0) {
-        return TermCalendarState(TermCalendarStatus.BEFORE_TERM, 0, requested ?: 1, false, todayDayIndex, daysUntilStart = -diffDays)
+        return TermCalendarState(TermCalendarStatus.BEFORE_TERM, 0, requestedWithinKnownLimit ?: 1, false, todayDayIndex, daysUntilStart = -diffDays)
     }
     val actualWeek = diffDays / 7 + 1
-    if (actualWeek > safeTotalWeeks) {
+    if (totalWeeksReliable && actualWeek > safeTotalWeeks) {
         val endOrdinal = startOrdinal + safeTotalWeeks * 7L - 1L
         return TermCalendarState(
             TermCalendarStatus.AFTER_TERM,
@@ -81,7 +83,8 @@ internal fun getTermCalendarState(
             daysAfterEnd = (todayOrdinal - endOrdinal).toInt()
         )
     }
-    val displayed = requested ?: actualWeek
+    val displayLimitWeeks = if (totalWeeksReliable) safeTotalWeeks else maxOf(safeTotalWeeks, actualWeek, requested ?: 1)
+    val displayed = (requested ?: actualWeek).coerceIn(1, displayLimitWeeks)
     return TermCalendarState(TermCalendarStatus.ACTIVE, actualWeek, displayed, displayed == actualWeek, todayDayIndex)
 }
 

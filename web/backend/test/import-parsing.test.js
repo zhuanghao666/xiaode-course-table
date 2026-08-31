@@ -406,7 +406,28 @@ test('strict term parser ignores unknown arrays and filters records from another
   assert.equal(result.rawCount, 3);
   assert.equal(result.acceptedCount, 1);
   assert.equal(result.importedCount, 1);
-  assert.equal(result.explicitTotalWeeks, 20);
+  assert.equal(result.explicitTotalWeeks, null);
+  assert.deepEqual(result.ignoredTotalWeeksFields, ['totalweeks']);
+  assert.ok(result.warnings.some((warning) => warning.reasonCode === IMPORT_REASON_CODES.UNTRUSTED_TOTAL_WEEKS_FIELD));
   assert.equal(result.courses[0].termKey, 'account-a:2025:3');
   assert.equal(result.courses[0].selectedTermLabel, context.selectedTermLabel);
+});
+
+test('total-week metadata ignores zxs and every unverified recursive alias', () => {
+  const context = { accountId: 'account-a', userId: 'user-a', xnm: '2026', xqm: '12', selectedTermLabel: '2026-2027 第二学期' };
+  const result = analyzeJwxtImport({
+    totalWeeks: 54,
+    metadata: { xqzcs: 48, maxWeek: 52, weekCount: 50 },
+    kbList: [
+      { kcmc: '课程总学时不是总周数', xnm: '2026', xqm: '12', xqj: 1, jcor: '1-2节', zcd: '1-16周', zxs: 54 }
+    ]
+  }, context);
+
+  assert.equal(result.explicitTotalWeeks, null);
+  assert.deepEqual(result.ignoredTotalWeeksFields, ['maxweek', 'totalweeks', 'weekcount', 'xqzcs', 'zxs']);
+  assert.equal(Math.max(...result.courses[0].weeks), 16);
+  assert.deepEqual(
+    result.warnings.filter((warning) => warning.reasonCode === IMPORT_REASON_CODES.UNTRUSTED_TOTAL_WEEKS_FIELD).map((warning) => warning.message),
+    ['已忽略未经真实响应验证的总周数字段：maxweek、totalweeks、weekcount、xqzcs、zxs；将使用已确认的手工设置或课程最晚周次。']
+  );
 });

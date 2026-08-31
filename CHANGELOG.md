@@ -2,7 +2,9 @@
 
 ## v41-dev
 
-学期隔离与动态周数开发版。修复教务响应递归扫描导致其他学期课程混入的问题；课程按 `accountId:xnm:xqm` 分区，账号保存 `activeTermKey`，Web/Android/Widget 只展示当前激活学期。每个学期独立保存 `termStart/totalWeeks`，导入优先采用教务明确值，其次采用有效课程最大周次。
+学期隔离与动态周数开发版。修复教务响应递归扫描导致其他学期课程混入的问题；课程按 `accountId:xnm:xqm` 分区，账号保存 `activeTermKey`，Web/Android/Widget 只展示当前激活学期。每个学期独立保存 `termStart/totalWeeks`，导入优先保留用户确认值，否则只把有效课程最大周次作为预览下界。
+
+- 修复 JWXT `zxs`（课程总学时）被递归误判为 48/54 个教学周；未验证字段不再自动采用，课程最大周次只作为不可靠预览下界，不能触发 `after-term`。旧 `jwxt-response` 来源会安全降级，手工确认值在重导后保持不变。
 
 ## v40-dev
 

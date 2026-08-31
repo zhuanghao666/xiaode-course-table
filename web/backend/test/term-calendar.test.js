@@ -10,8 +10,8 @@ vm.createContext(sandbox);
 vm.runInContext(source, sandbox);
 const calendar = sandbox.XiaoDeTermCalendar;
 
-function state(today, termStart = '2026-09-07', totalWeeks = 20, displayedWeek = null) {
-  return calendar.getTermCalendarState({ today, termStart, totalWeeks, displayedWeek });
+function state(today, termStart = '2026-09-07', totalWeeks = 20, displayedWeek = null, totalWeeksReliable = true) {
+  return calendar.getTermCalendarState({ today, termStart, totalWeeks, displayedWeek, totalWeeksReliable });
 }
 
 test('unknown termStart permits week-one preview without inventing actualWeek or today', () => {
@@ -54,6 +54,21 @@ test('preview and actual week are independent and only actual displayed week can
   assert.equal(preview.displayedWeek, 1);
   assert.equal(preview.todayInDisplayedWeek, false);
   assert.equal(state('2026-09-23', '2026-09-07', 20, 3).todayInDisplayedWeek, true);
+});
+
+test('an unconfirmed total-week lower bound never creates a false after-term state', () => {
+  const uncertain = state('2027-01-25', '2026-09-07', 16, null, false);
+  assert.equal(uncertain.actualWeek, 21);
+  assert.equal(uncertain.status, 'active');
+  assert.equal(uncertain.displayedWeek, 21);
+  assert.equal(uncertain.displayLimitWeeks, 21);
+  assert.equal(uncertain.totalWeeksReliable, false);
+  assert.equal(uncertain.todayInDisplayedWeek, true);
+
+  const confirmed = state('2027-01-25', '2026-09-07', 16, null, true);
+  assert.equal(confirmed.status, 'after-term');
+  assert.equal(confirmed.displayedWeek, 16);
+  assert.equal(confirmed.totalWeeksReliable, true);
 });
 
 test('weekday dates use local calendar days across month, year and leap day', () => {

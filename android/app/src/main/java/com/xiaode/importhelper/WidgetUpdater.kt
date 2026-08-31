@@ -125,10 +125,12 @@ object WidgetUpdater {
             val meta = json.optJSONObject("meta") ?: JSONObject()
             val termStart = meta.optString("termStart", "")
             val totalWeeks = meta.optInt("totalWeeks", 20).coerceIn(1, 60)
+            // 旧缓存没有可靠性标记时按“不可靠”处理，避免曾经的 zxs=48/54 误判继续影响 Widget。
+            val totalWeeksReliable = meta.has("totalWeeksReliable") && meta.optBoolean("totalWeeksReliable", false)
             val slots = parseSlots(json.optJSONArray("slots") ?: JSONArray())
             val courses = parseCourses(json.optJSONArray("courses") ?: JSONArray(), activeTermKey)
             val now = Calendar.getInstance()
-            val calendarState = getTermCalendarState(termStart, totalWeeks, now)
+            val calendarState = getTermCalendarState(termStart, totalWeeks, now, totalWeeksReliable = totalWeeksReliable)
 
             views.setTextViewText(R.id.widgetTitle, "小德课表 · $scheduleName")
             if (calendarState.status != TermCalendarStatus.ACTIVE) {

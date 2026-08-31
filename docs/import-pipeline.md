@@ -81,3 +81,5 @@ v39 课程是一条记录代表一个 `slot`。连续 1～2 节会转换为两�
 课程仍保持 v39 的逐 `slot` 兼容结构，新增 `source/sourceDetail/sourceIndex/startSlot/endSlot/term/xnm/xqm/isAdjusted/importTraceId` 供追踪。去重指纹包含账号、名称、日期节次、教师、地点、班组、周次、单双周、类别和来源；仅周次不同时安全合并，教室、教师或调课差异保留并标记冲突。
 
 replace 最终范围是「导入码绑定 accountId + 同 `termKey` 学期 + `source=jwxt`」。`termKey` 固定包含 accountId，导入成功后写入账号 `activeTermKey`；Web、今日课程和 Widget 只消费激活学期。完整解析成功后先组装 `nextCourses`、验证归属、创建用户级导入前备份，再用一次 `writeDb()` 提交。Android 的 `ImportTaskContext` 在任务开始时冻结 server/importCode/accountId/学期/替换模式，完成事件只刷新仍处于激活状态的原账号。
+
+总周数不再从任意嵌套元数据递归猜测。当前真实响应没有验证通过的总周数字段，`zxs` 明确按课程总学时处理并忽略；导入最多使用有效课程的最晚周次作为不可靠预览下界。`totalWeeksReliable=false` 时 Web、后端与 Android Widget 都保持 active 计算，不会仅凭该下界宣告学期结束；用户在当前账号和 term 的设置中确认后才形成可靠结束边界。

@@ -776,12 +776,24 @@
     function pad(n){return String(n).padStart(2,'0')}
     function getActiveTerm(){ return state.activeTerm||null; }
     function getActiveTermTotalWeeks(){ const value=Number(getActiveTerm()?.totalWeeks); return Number.isInteger(value)&&value>=1&&value<=60?value:20; }
-    function getActiveTermStart(){ return getActiveTerm()?.termStart||''; }
-    function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:getActiveTermTotalWeeks(),termStart:getActiveTermStart(),weekStartDay:Number(settings.weekStartDay||1)}; }
-    function totalWeeks(){ return getActiveTermTotalWeeks(); }
-    function getTermCalendarStateForUi(now=new Date(),displayedWeek=state.previewWeek){
-      return TERM_CALENDAR.getTermCalendarState({today:now,termStart:getActiveTermStart(),totalWeeks:totalWeeks(),displayedWeek});
+    function termTotalWeeksReliable(term=getActiveTerm()){
+      if(typeof term?.totalWeeksReliable==='boolean') return term.totalWeeksReliable;
+      const source=String(term?.totalWeeksSource||'');
+      return source==='manual'||source==='legacy-account-setting'||source.startsWith('jwxt-verified:');
     }
+    function getActiveTermTotalWeeksReliable(){ return termTotalWeeksReliable(getActiveTerm()); }
+    function termWeeksSummary(term){
+      const value=Number(term?.totalWeeks);
+      const weeks=Number.isInteger(value)&&value>=1&&value<=60?value:20;
+      if(termTotalWeeksReliable(term)) return `${weeks}周`;
+      return String(term?.totalWeeksSource||'')==='course-max-week'?`课程至${weeks}周`:'总周数待确认';
+    }
+    function getActiveTermStart(){ return getActiveTerm()?.termStart||''; }
+    function effectiveMeta(){ const meta=state.meta||{}; const settings=state.courseSettings||{}; return {...meta,totalWeeks:getActiveTermTotalWeeks(),totalWeeksReliable:getActiveTermTotalWeeksReliable(),termStart:getActiveTermStart(),weekStartDay:Number(settings.weekStartDay||1)}; }
+    function getTermCalendarStateForUi(now=new Date(),displayedWeek=state.previewWeek){
+      return TERM_CALENDAR.getTermCalendarState({today:now,termStart:getActiveTermStart(),totalWeeks:getActiveTermTotalWeeks(),totalWeeksReliable:getActiveTermTotalWeeksReliable(),displayedWeek});
+    }
+    function totalWeeks(){ return getTermCalendarStateForUi().displayLimitWeeks; }
     function clampPreviewWeek(){ if(state.previewWeek!==null) state.previewWeek=getTermCalendarStateForUi(new Date(),state.previewWeek).displayedWeek; }
     function saveCourseSettings(next,options={}){ if(options.markCustomized!==false) markLayoutCustomized(); state.courseSettings={...DEFAULT_COURSE_SETTINGS,...(state.courseSettings||{}),...(next||{})}; localStorage.setItem(accountStorageKey('xiaodeCourseSettings',state.accountId), JSON.stringify(state.courseSettings)); applyCourseSettingsVisibility(); schedulePreferenceSave(); }
     function applyCourseSettingsVisibility(){ const st=state.courseSettings||DEFAULT_COURSE_SETTINGS; document.body.classList.toggle('hide-location-module', !st.showLocation); document.body.classList.toggle('hide-teacher-module', !st.showTeacher); document.body.classList.toggle('hide-class-group-module', !st.showClassGroup); document.body.classList.toggle('custom-time-module', !!st.customTime); }
@@ -1169,7 +1181,7 @@
       if(!line) return;
       const terms=state.availableTerms||[];
       if(!state.user||!terms.length){line.textContent='';return;}
-      line.innerHTML=`<select id="activeTermSelect" class="term-select" aria-label="当前学期">${terms.map(term=>`<option value="${escapeHtml(term.termKey)}" ${term.termKey===getActiveTerm()?.termKey?'selected':''}>${escapeHtml(term.selectedTermLabel||term.label||'历史课程')} · ${Number(term.totalWeeks||20)}周</option>`).join('')}</select>`;
+      line.innerHTML=`<select id="activeTermSelect" class="term-select" aria-label="当前学期">${terms.map(term=>`<option value="${escapeHtml(term.termKey)}" ${term.termKey===getActiveTerm()?.termKey?'selected':''}>${escapeHtml(term.selectedTermLabel||term.label||'历史课程')} · ${escapeHtml(termWeeksSummary(term))}</option>`).join('')}</select>`;
       const select=$('#activeTermSelect');
       if(select) select.onchange=()=>switchActiveTerm(select.value);
     }
@@ -1206,7 +1218,7 @@
         else if(next){$('#statusPill').textContent='课间休息'; $('#nextName').textContent=next.name; $('#nextMeta').textContent=`${DAYS[next.day-1]} · ${getSlot(next.slot).label} · ${next.location}`;}
         else{$('#statusPill').textContent='今日结束'; $('#nextName').textContent='今天没有下一节课'; $('#nextMeta').textContent='可以休息一下';}
       }
-      $('#weekTitle').textContent=termWeekTitle(calendar); $('#weekBadge').textContent=`共${totalWeeks()}周`; $('#weekBadge').classList.toggle('week-current', calendar.todayInDisplayedWeek); $('#parityBadge').textContent=calendar.displayedWeek%2===0?'双周':'单周';
+      $('#weekTitle').textContent=termWeekTitle(calendar); $('#weekBadge').textContent=calendar.totalWeeksReliable?`共${calendar.totalWeeks}周`:termWeeksSummary(getActiveTerm()); $('#weekBadge').classList.toggle('week-current', calendar.todayInDisplayedWeek); $('#parityBadge').textContent=calendar.displayedWeek%2===0?'双周':'单周';
     }
     function renderWeeks(){ $('#weekStrip').innerHTML=''; }
     function renderTable(){
@@ -2154,12 +2166,14 @@
     function openScheduleSettingsModal(){
       const meta=effectiveMeta();
       const st=state.courseSettings||DEFAULT_COURSE_SETTINGS;
+      const totalWeeksNote=getActiveTermTotalWeeksReliable()?'':`<div class="secondary-note">系统尚未取得可靠的学期总周数，当前值只用于课程预览，不会据此判定学期结束；请向学校确认后保存。</div>`;
       openModal('课表设置', `
         <div class="form-grid">
           <div class="row"><label>一共多少周</label><input id="settingTotalWeeks" type="number" min="1" max="60" value="${escapeHtml(getActiveTermTotalWeeks())}" /></div>
           <div class="row"><label>每周开始日</label><select id="settingWeekStartDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${Number(st.weekStartDay||1)===i+1?'selected':''}>${d}</option>`).join('')}</select></div>
           <div class="row"><label>设置第一教学周周一</label><input id="settingTermStart" type="date" value="${escapeHtml(getActiveTermStart())}" /></div>
         </div>
+        ${totalWeeksNote}
         <div class="secondary-note">日期尚未公布时可以留空，不影响课程导入和第1周预览；公布后保存周一日期，会立即启用真实周次、星期日期和今天高亮。</div>
         <div class="style-switch-grid" style="margin-top:14px">
           <div class="style-row"><div>是否需要教室模块<small>关闭后课程格子和编辑界面不突出教室。</small></div><button class="btn ghost" id="settingShowLocation">${st.showLocation?'开启':'关闭'}</button></div>
@@ -2708,6 +2722,8 @@ $('#helpBtnAuth').onclick = openHelpModal;
           termStart: getActiveTermStart(),
           termStartStatus: calendar.status,
           totalWeeks: getActiveTermTotalWeeks(),
+          totalWeeksSource: getActiveTerm()?.totalWeeksSource||'',
+          totalWeeksReliable: getActiveTermTotalWeeksReliable(),
           currentWeek: calendar.actualWeek
         } : {},
         slots: (state.slots || []).map(s => ({

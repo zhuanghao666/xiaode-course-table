@@ -109,14 +109,21 @@ test('portrait Web timetable renders one spanning DOM and persists the section-r
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', `--user-data-dir=${profileDir}`, 'about:blank'
   ], { stdio: 'ignore' });
+  let cdp = null;
   t.after(async () => {
+    if (cdp) {
+      try { await cdp.send('Browser.close'); } catch {}
+      try { cdp.socket.close(); } catch {}
+      // Edge acknowledges Browser.close before all profile-holding subprocesses have exited on Windows.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
     if (edge.exitCode === null) edge.kill();
     if (backend.exitCode === null) backend.kill();
     await Promise.all([
       new Promise((resolve) => edge.exitCode === null ? edge.once('exit', resolve) : resolve()),
       new Promise((resolve) => backend.exitCode === null ? backend.once('exit', resolve) : resolve())
     ]);
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
 
   await waitFor(async () => {
@@ -133,8 +140,7 @@ test('portrait Web timetable renders one spanning DOM and persists the section-r
       return pages.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl) || null;
     } catch { return null; }
   }, 'Edge page target timeout');
-  const cdp = await connectCdp(page.webSocketDebuggerUrl);
-  t.after(() => cdp.socket.close());
+  cdp = await connectCdp(page.webSocketDebuggerUrl);
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
   await cdp.send('Emulation.setDeviceMetricsOverride', {
@@ -175,7 +181,7 @@ test('portrait Web timetable renders one spanning DOM and persists the section-r
   assert.equal(importWhileUnknown.status, 200);
   assert.equal(importWhileUnknown.body.ok, true);
 
-  const unknownState = await evaluate(`(()=>{state.previewWeek=4;renderAll();showTodayCourses();const payload=buildWidgetPayload();return {status:getTermCalendarStateForUi().status,actualWeek:getWeek(),displayedWeek:getSelectedWeek(),todayHeads:document.querySelectorAll('.head.today').length,datedHeads:[...document.querySelectorAll('.day-sub')].filter(node=>/\\d{2}\\/\\d{2}/.test(node.textContent)).length,weekTitle:document.querySelector('#weekTitle')?.textContent||'',statusPill:document.querySelector('#statusPill')?.textContent||'',toast:document.querySelector('#toast')?.textContent||'',widgetStatus:payload.meta.termStartStatus,widgetWeek:payload.meta.currentWeek};})()`);
+  const unknownState = await evaluate(`(()=>{state.previewWeek=4;renderAll();showTodayCourses();const payload=buildWidgetPayload();return {status:getTermCalendarStateForUi().status,actualWeek:getWeek(),displayedWeek:getSelectedWeek(),todayHeads:document.querySelectorAll('.head.today').length,datedHeads:[...document.querySelectorAll('.day-sub')].filter(node=>/\\d{2}\\/\\d{2}/.test(node.textContent)).length,weekTitle:document.querySelector('#weekTitle')?.textContent||'',statusPill:document.querySelector('#statusPill')?.textContent||'',toast:document.querySelector('#toast')?.textContent||'',widgetStatus:payload.meta.termStartStatus,widgetWeek:payload.meta.currentWeek,widgetWeeksReliable:payload.meta.totalWeeksReliable};})()`);
   assert.deepEqual(unknownState, {
     status: 'unknown',
     actualWeek: null,
@@ -186,7 +192,8 @@ test('portrait Web timetable renders one spanning DOM and persists the section-r
     statusPill: '开学日期待确认',
     toast: '开学日期尚未确认，暂时无法定位今天的课程',
     widgetStatus: 'unknown',
-    widgetWeek: null
+    widgetWeek: null,
+    widgetWeeksReliable: false
   });
 
   const termSetting = await evaluate(`(async()=>{const invalid=await fetch('/api/my/active-term/settings',{method:'PUT',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({totalWeeks:20,termStart:'2099-01-06'})});const valid=await fetch('/api/my/active-term/settings',{method:'PUT',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({totalWeeks:20,termStart:'2099-01-05'})});const data=await valid.json();state.activeTerm=data.activeTerm;state.previewWeek=null;renderAll();const known={status:getTermCalendarStateForUi().status,serverStatus:data.activeTerm.termStartStatus,serverWeek:data.activeTerm.actualWeek,actualWeek:getWeek(),todayHeads:document.querySelectorAll('.head.today').length,firstDate:document.querySelector('.day-sub')?.textContent||''};const cleared=await fetch('/api/my/active-term/settings',{method:'PUT',headers:{'content-type':'application/json','x-user-token':state.token},body:JSON.stringify({totalWeeks:20,termStart:''})});const clearedData=await cleared.json();state.activeTerm=clearedData.activeTerm;state.previewWeek=null;renderAll();return {invalidStatus:invalid.status,validStatus:valid.status,clearStatus:cleared.status,known,clearedState:getTermCalendarStateForUi().status,clearedServerState:clearedData.activeTerm.termStartStatus};})()`);
