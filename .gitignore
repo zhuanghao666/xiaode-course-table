@@ -21,6 +21,7 @@ web/backend/data/*.bak
 
 # Android / Gradle
 .gradle/
+.kotlin/
 build/
 */build/
 local.properties

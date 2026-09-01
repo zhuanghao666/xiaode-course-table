@@ -179,7 +179,8 @@ test('Android Widget consumes logical section ranges with legacy slot fallback',
   assert.match(widget, /o\.has\("startSlot"\)/);
   assert.match(widget, /o\.has\("endSlot"\)/);
   assert.match(widget, /courseMinuteRange\(CourseSlotRange\(course\.startSlot,\s*course\.endSlot\)/);
-  assert.match(widget, /courseSectionLabel\(CourseSlotRange\(course\.startSlot,\s*course\.endSlot\)/);
+  assert.match(widget, /templateSectionLabel\(slot,\s*endSlot\)/);
+  assert.match(widget, /displayNumber/);
   assert.match(termScope, /data class CourseSlotRange\(val startSlot:\s*Int,\s*val endSlot:\s*Int\)/);
   assert.match(termScope, /fun normalizeCourseSlotRange\(/);
   assert.match(termScope, /fun courseMinuteRange\(/);

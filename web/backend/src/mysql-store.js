@@ -302,6 +302,7 @@ async function ensureTables(conn) {
       role VARCHAR(40),
       status VARCHAR(40),
       active_term_key VARCHAR(160),
+      revision INT,
       created_at VARCHAR(40),
       updated_at VARCHAR(40),
       raw_json LONGTEXT,
@@ -318,15 +319,28 @@ async function ensureTables(conn) {
       slot INT,
       start_slot INT,
       end_slot INT,
+      source_start_slot INT,
+      source_end_slot INT,
+      start_slot_key VARCHAR(80),
+      end_slot_key VARCHAR(80),
+      schedule_template_id VARCHAR(120),
+      client_local_id VARCHAR(120),
+      revision INT,
+      updated_at VARCHAR(40),
       name VARCHAR(255) NOT NULL,
       short_name VARCHAR(255),
       teacher VARCHAR(255),
       location VARCHAR(255),
+      room VARCHAR(255),
       class_group VARCHAR(255),
       week_text VARCHAR(255),
       weeks_json LONGTEXT,
       odd_even VARCHAR(40),
       category VARCHAR(80),
+      source VARCHAR(120),
+      source_ids_json LONGTEXT,
+      underlying_ids_json LONGTEXT,
+      schedule_variants_json LONGTEXT,
       term_key VARCHAR(160),
       xnm VARCHAR(20),
       xqm VARCHAR(20),
@@ -348,6 +362,8 @@ async function ensureTables(conn) {
       term_start VARCHAR(20),
       total_weeks INT,
       total_weeks_source VARCHAR(80),
+      schedule_template_id VARCHAR(120),
+      revision INT,
       updated_at VARCHAR(40),
       raw_json LONGTEXT,
       INDEX idx_terms_account_id (account_id)
@@ -361,6 +377,7 @@ async function ensureTables(conn) {
       user_id VARCHAR(80) NOT NULL,
       preferences_json LONGTEXT,
       slots_json LONGTEXT,
+      revision INT,
       updated_at VARCHAR(40),
       raw_json LONGTEXT,
       INDEX idx_settings_account_id (account_id)
@@ -398,6 +415,38 @@ async function ensureTables(conn) {
       start_time VARCHAR(20),
       end_time VARCHAR(20),
       raw_json LONGTEXT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS schedule_templates (
+      template_id VARCHAR(120) PRIMARY KEY,
+      account_id VARCHAR(80),
+      term_key VARCHAR(160),
+      school_id VARCHAR(120),
+      campus_id VARCHAR(120),
+      name VARCHAR(160),
+      version INT,
+      revision INT,
+      updated_at VARCHAR(40),
+      periods_json LONGTEXT,
+      raw_json LONGTEXT,
+      INDEX idx_schedule_templates_account_term (account_id, term_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS processed_mutations (
+      operation_id VARCHAR(160) NOT NULL,
+      account_id VARCHAR(80) NOT NULL,
+      term_key VARCHAR(160),
+      payload_hash VARCHAR(80) NOT NULL,
+      status_code INT,
+      response_json LONGTEXT,
+      created_at VARCHAR(40),
+      raw_json LONGTEXT,
+      PRIMARY KEY (operation_id, account_id),
+      INDEX idx_processed_mutations_account_created (account_id, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
@@ -449,12 +498,29 @@ async function ensureTables(conn) {
 
   // 旧镜像表采用幂等列迁移，不能要求用户删除数据库。
   await ensureColumn(conn, 'accounts', 'active_term_key', 'VARCHAR(160) NULL');
+  await ensureColumn(conn, 'accounts', 'revision', 'INT NULL');
   await ensureColumn(conn, 'courses', 'term_key', 'VARCHAR(160) NULL');
   await ensureColumn(conn, 'courses', 'xnm', 'VARCHAR(20) NULL');
   await ensureColumn(conn, 'courses', 'xqm', 'VARCHAR(20) NULL');
   await ensureColumn(conn, 'courses', 'selected_term_label', 'VARCHAR(160) NULL');
   await ensureColumn(conn, 'courses', 'start_slot', 'INT NULL');
   await ensureColumn(conn, 'courses', 'end_slot', 'INT NULL');
+  await ensureColumn(conn, 'courses', 'source_start_slot', 'INT NULL');
+  await ensureColumn(conn, 'courses', 'source_end_slot', 'INT NULL');
+  await ensureColumn(conn, 'courses', 'start_slot_key', 'VARCHAR(80) NULL');
+  await ensureColumn(conn, 'courses', 'end_slot_key', 'VARCHAR(80) NULL');
+  await ensureColumn(conn, 'courses', 'schedule_template_id', 'VARCHAR(120) NULL');
+  await ensureColumn(conn, 'courses', 'client_local_id', 'VARCHAR(120) NULL');
+  await ensureColumn(conn, 'courses', 'revision', 'INT NULL');
+  await ensureColumn(conn, 'courses', 'updated_at', 'VARCHAR(40) NULL');
+  await ensureColumn(conn, 'courses', 'room', 'VARCHAR(255) NULL');
+  await ensureColumn(conn, 'courses', 'source', 'VARCHAR(120) NULL');
+  await ensureColumn(conn, 'courses', 'source_ids_json', 'LONGTEXT NULL');
+  await ensureColumn(conn, 'courses', 'underlying_ids_json', 'LONGTEXT NULL');
+  await ensureColumn(conn, 'courses', 'schedule_variants_json', 'LONGTEXT NULL');
+  await ensureColumn(conn, 'terms', 'schedule_template_id', 'VARCHAR(120) NULL');
+  await ensureColumn(conn, 'terms', 'revision', 'INT NULL');
+  await ensureColumn(conn, 'settings', 'revision', 'INT NULL');
   await ensureIndex(conn, 'courses', 'idx_courses_account_term', ['account_id', 'term_key']);
 }
 
@@ -510,7 +576,7 @@ async function upsertState(conn, db) {
 }
 
 async function clearMirrorTables(conn) {
-  const tables = ['users', 'accounts', 'courses', 'terms', 'settings', 'reminders', 'sessions', 'slots', 'feedbacks', 'import_codes', 'backups'];
+  const tables = ['users', 'accounts', 'courses', 'terms', 'settings', 'reminders', 'sessions', 'slots', 'schedule_templates', 'processed_mutations', 'feedbacks', 'import_codes', 'backups'];
   for (const table of tables) await conn.query(`DELETE FROM ${quoteIdentifier(table)}`);
 }
 
@@ -529,33 +595,33 @@ async function insertMirrorRows(conn, db) {
 
   for (const a of db.accounts || []) {
     await conn.query(
-      `INSERT INTO accounts (id, user_id, username, name, role, status, active_term_key, created_at, updated_at, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [a.id, a.userId || '', a.username || '', a.name || '', a.role || '', a.status || '', a.activeTermKey || '', a.createdAt || '', a.updatedAt || '', j(a)]
+      `INSERT INTO accounts (id, user_id, username, name, role, status, active_term_key, revision, created_at, updated_at, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [a.id, a.userId || '', a.username || '', a.name || '', a.role || '', a.status || '', a.activeTermKey || '', Number(a.revision || 1), a.createdAt || '', a.updatedAt || '', j(a)]
     );
   }
 
   for (const c of db.courses || []) {
     await conn.query(
-      `INSERT INTO courses (id, user_id, account_id, day, slot, start_slot, end_slot, name, short_name, teacher, location, class_group, week_text, weeks_json, odd_even, category, term_key, xnm, xqm, selected_term_label, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [c.id, c.userId || '', c.accountId || c.userId || '', Number(c.day || 0), Number(c.slot || 0), Number(c.startSlot || c.slot || 0), Number(c.endSlot || c.slot || 0), c.name || '', c.shortName || '', c.teacher || '', c.location || '', c.classGroup || '', c.weekText || '', j(c.weeks || []), c.oddEven || 'all', c.category || 'custom', c.termKey || '', c.xnm || '', c.xqm || '', c.selectedTermLabel || '', j(c)]
+      `INSERT INTO courses (id, user_id, account_id, day, slot, start_slot, end_slot, source_start_slot, source_end_slot, start_slot_key, end_slot_key, schedule_template_id, client_local_id, revision, updated_at, name, short_name, teacher, location, room, class_group, week_text, weeks_json, odd_even, category, source, source_ids_json, underlying_ids_json, schedule_variants_json, term_key, xnm, xqm, selected_term_label, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [c.id, c.userId || '', c.accountId || c.userId || '', Number(c.day || 0), Number(c.slot || 0), Number(c.startSlot || c.slot || 0), Number(c.endSlot || c.slot || 0), Number(c.sourceStartSlot || c.startSlot || c.slot || 0), Number(c.sourceEndSlot || c.endSlot || c.slot || 0), c.startSlotKey || '', c.endSlotKey || '', c.scheduleTemplateId || '', c.clientLocalId || '', Number(c.revision || 1), c.updatedAt || '', c.name || '', c.shortName || '', c.teacher || '', c.location || '', c.room || c.location || '', c.classGroup || '', c.weekText || '', j(c.weeks || []), c.oddEven || 'all', c.category || 'custom', c.source || '', j(c.sourceIds || []), j(c.underlyingIds || []), j(c.scheduleVariants || []), c.termKey || '', c.xnm || '', c.xqm || '', c.selectedTermLabel || '', j(c)]
     );
   }
 
   for (const term of db.terms || []) {
     await conn.query(
-      `INSERT INTO terms (term_key, account_id, user_id, xnm, xqm, selected_term_label, term_start, total_weeks, total_weeks_source, updated_at, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [term.termKey, term.accountId || '', term.userId || '', term.xnm || '', term.xqm || '', term.selectedTermLabel || '', term.termStart || '', Number(term.totalWeeks || 0), term.totalWeeksSource || '', term.updatedAt || '', j(term)]
+      `INSERT INTO terms (term_key, account_id, user_id, xnm, xqm, selected_term_label, term_start, total_weeks, total_weeks_source, schedule_template_id, revision, updated_at, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [term.termKey, term.accountId || '', term.userId || '', term.xnm || '', term.xqm || '', term.selectedTermLabel || '', term.termStart || '', Number(term.totalWeeks || 0), term.totalWeeksSource || '', term.scheduleTemplateId || '', Number(term.revision || 1), term.updatedAt || '', j(term)]
     );
   }
 
   for (const s of db.settings || []) {
     await conn.query(
-      `INSERT INTO settings (id, account_id, user_id, preferences_json, slots_json, updated_at, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [s.id, s.accountId || '', s.userId || '', j(s.preferences || {}), j(s.slots || null), s.updatedAt || '', j(s)]
+      `INSERT INTO settings (id, account_id, user_id, preferences_json, slots_json, revision, updated_at, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [s.id, s.accountId || '', s.userId || '', j(s.preferences || {}), j(s.slots || null), Number(s.revision || 1), s.updatedAt || '', j(s)]
     );
   }
 
@@ -580,6 +646,22 @@ async function insertMirrorRows(conn, db) {
       `INSERT INTO slots (slot, label, range_text, start_time, end_time, raw_json)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [Number(slot.slot || 0), slot.label || '', slot.range || '', slot.start || '', slot.end || '', j(slot)]
+    );
+  }
+
+  for (const template of db.scheduleTemplates || []) {
+    await conn.query(
+      `INSERT INTO schedule_templates (template_id, account_id, term_key, school_id, campus_id, name, version, revision, updated_at, periods_json, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [template.templateId, template.accountId || null, template.termKey || null, template.schoolId || null, template.campusId || null, template.name || '', Number(template.version || 1), Number(template.revision || 1), template.updatedAt || '', j(template.periods || []), j(template)]
+    );
+  }
+
+  for (const operation of db.processedMutations || []) {
+    await conn.query(
+      `INSERT INTO processed_mutations (operation_id, account_id, term_key, payload_hash, status_code, response_json, created_at, raw_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [operation.operationId, operation.accountId || '', operation.termKey || '', operation.payloadHash || '', Number(operation.statusCode || 200), j(operation.response || {}), operation.createdAt || '', j(operation)]
     );
   }
 
@@ -635,7 +717,9 @@ async function syncNow(db) {
         courses: snapshot.courses?.length || 0,
         terms: snapshot.terms?.length || 0,
         settings: snapshot.settings?.length || 0,
-        reminders: snapshot.reminders?.length || 0
+        reminders: snapshot.reminders?.length || 0,
+        scheduleTemplates: snapshot.scheduleTemplates?.length || 0,
+        processedMutations: snapshot.processedMutations?.length || 0
       },
       message: 'MySQL 镜像同步正常；db.json 是主存储'
     };

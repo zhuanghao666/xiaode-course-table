@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; form-action 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob: https://cdn.jsdelivr.net" />
   <title>小德课表</title>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.js"></script>
   <style>
     :root{
       --bg1:#eef1f2;--bg2:#d9dfe2;--bg3:#d7d0d2;--text:#46515e;--muted:#75808c;--line:#d8dde4;--card:rgba(255,255,255,.82);--accent:#8f84a8;--accent-strong:#7f76a4;--accent2:#c8ab93;--head1:#978fad;--head2:#aab8c4;--head-today1:#c7b2b6;--head-today2:#ac9db6;--shadow:0 18px 44px rgba(98,107,124,.12);--r:26px;
@@ -453,6 +452,8 @@
     .reminder-preview-item.end::before{background:#20b89a}
     .reminder-permission-hero{text-align:left;display:grid;gap:12px}
     .reminder-permission-hero .big{font-size:18px;font-weight:950;line-height:1.6}
+    .sync-status{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.62);color:var(--muted);font-size:12px;font-weight:900;border:1px solid rgba(140,150,165,.13)}
+    .sync-status::before{content:'';width:7px;height:7px;border-radius:50%;background:#72ad8b}.sync-status.offline::before{background:#c79569}.sync-status.syncing::before{background:#779bc5}.sync-status.failed::before{background:#c87979}
     @media (max-width:1000px){.reminder-card{border-radius:22px;padding:13px 14px}.reminder-row{font-size:17px}.reminder-pill{min-width:86px}.reminder-select{width:min(180px,46vw)}}
 
 
@@ -466,6 +467,7 @@
         <div class="title" id="appTitle">小德课表</div>
         <div class="sub" id="dateLine">--</div>
         <div class="sub" id="noticeLine">--</div>
+        <div class="sync-status" id="syncStatusBadge">本地数据准备中</div>
       </div>
       <div class="right">
         <div class="pill" id="statusPill">请先登录</div>
@@ -575,7 +577,8 @@
             <div class="row module-location"><label>地点 / 教室</label><input id="courseLocation" /></div>
             <div class="row module-class-group"><label>班级</label><input id="courseClassGroup" placeholder="可选，例如：化学2班" /></div>
             <div class="row"><label>星期</label><select id="courseDay"></select></div>
-            <div class="row"><label>节次</label><select id="courseSlot"></select></div>
+            <div class="row"><label>开始节次</label><select id="courseSlot"></select></div>
+            <div class="row"><label>结束节次</label><select id="courseEndSlot"></select></div>
             <div class="row"><label>周次文本</label><input id="courseWeekText" placeholder="例如 1-20周 / 5周 / 1-20周(单)" /></div>
             <div class="row"><label>单双周</label><select id="courseOddEven"><option value="all">全部</option><option value="odd">单周</option><option value="even">双周</option></select></div>
             <div class="row"><label>分类</label><select id="courseCategory"><option value="public_required">公共必修</option><option value="major_required">专业必修</option><option value="major_elective">专业选修</option><option value="public_elective">公共选修</option><option value="lab">实验</option><option value="custom">自定义</option></select></div>
@@ -594,6 +597,7 @@
               <div class="row"><label>服务器地址</label><input id="appServerUrl" readonly /></div>
               <div class="row"><label>教务学年</label><select id="jwxtXnm"><option value="">请选择学年</option></select></div>
               <div class="row"><label>教务学期</label><select id="jwxtXqm"><option value="">请选择学期</option><option value="3">第一学期</option><option value="12">第二学期</option></select></div>
+              <div class="row"><label>课程时间表（导入前确认）</label><select id="jwxtScheduleTemplate"></select><small>学校 A 含“午间加时”；学校 B 的原始第5节就是 14:00。不能确定时保留旧版模板，导入后仍可在学期设置中切换。</small></div>
             </div>
             <div class="inline">
               <button class="btn primary" id="createImportCodeBtn">开始教务导入</button>
@@ -642,7 +646,7 @@
   </div>
   <div class="toast" id="toast"></div>
 
-  <script src="/term-calendar.js"></script>
+  <script src="./term-calendar.js"></script>
   <script>
     const DAYS=["周一","周二","周三","周四","周五","周六","周日"];
     const TERM_CALENDAR=window.XiaoDeTermCalendar;
@@ -668,13 +672,65 @@
     function loadAccountLocal(base,fallback=''){const scoped=localStorage.getItem(accountStorageKey(base));return scoped===null?(localStorage.getItem(base)??fallback):scoped}
     function saveAccountLocal(base,value,accountId=state.accountId){localStorage.setItem(accountStorageKey(base,accountId),String(value))}
     function loadCourseSettings(){try{const scoped=localStorage.getItem(accountStorageKey('xiaodeCourseSettings'));const legacy=localStorage.getItem('xiaodeCourseSettings');return {...DEFAULT_COURSE_SETTINGS,...JSON.parse(scoped||legacy||'{}')}}catch{return {...DEFAULT_COURSE_SETTINGS}}}
-    const state={token:localStorage.getItem('courseTableUserToken')||'',switchKey:localStorage.getItem('xiaodeCurrentSwitchKey')||'',accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],activeTerm:null,availableTerms:[],previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),tableFontSize:Number(loadAccountLocal('xiaodeTableFontSize','0')),layoutCustomized:localStorage.getItem(accountStorageKey('xiaodeLayoutCustomized'))==='1',hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
+    let SCHEDULE_TEMPLATE_API=null;
+    const IS_NATIVE_APP=!!(window.XiaoDeLocalBridge&&typeof window.XiaoDeLocalBridge.request==='function');
+    if(IS_NATIVE_APP){
+      localStorage.removeItem('courseTableUserToken');
+      localStorage.removeItem('xiaodeCurrentSwitchKey');
+      try{
+        const saved=JSON.parse(localStorage.getItem('xiaodeSavedAccounts')||'[]');
+        if(Array.isArray(saved)) localStorage.setItem('xiaodeSavedAccounts',JSON.stringify(saved.map(({token,switchKey,...account})=>account).slice(0,12)));
+      }catch{localStorage.removeItem('xiaodeSavedAccounts')}
+    }
+    const state={token:IS_NATIVE_APP?'':(localStorage.getItem('courseTableUserToken')||''),switchKey:IS_NATIVE_APP?'':(localStorage.getItem('xiaodeCurrentSwitchKey')||''),accountId:currentStoredAccountId(),user:null,meta:null,slots:[],courses:[],activeTerm:null,availableTerms:[],scheduleTemplate:null,scheduleTemplates:[],syncStatus:{status:'LOCAL',pendingCount:0,lastError:''},previewWeek:null,infoMode:'compact',editingCourse:null,noticeQuote:pickHealingQuote(),theme:loadAccountLocal('xiaodeTheme','morandi'),bottomToolbarHidden:loadAccountLocal('xiaodeBottomToolbarHidden','0')==='1',tableSize:loadAccountLocal('xiaodeTableSize','classic'),tableDayWidth:Number(loadAccountLocal('xiaodeTableDayWidth','0')),tableRowHeight:Number(loadAccountLocal('xiaodeTableRowHeight','0')),tableFontSize:Number(loadAccountLocal('xiaodeTableFontSize','0')),layoutCustomized:localStorage.getItem(accountStorageKey('xiaodeLayoutCustomized'))==='1',hideFifthSlot:loadAccountLocal('xiaodeHideFifthSlot','0')==='1',courseSettings:loadCourseSettings(),drawerPlaceholder:null,drawerOriginalParent:null,preferencesReady:false,applyingPreferences:false,accountRequestVersion:0,accountTransitionVersion:0};
     const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
     function toast(text){const el=$('#toast');el.textContent=text;el.classList.add('show');clearTimeout(window._toastTimer);window._toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
     function applyTheme(theme){state.theme=theme||'morandi';document.body.dataset.theme=state.theme;saveAccountLocal('xiaodeTheme',state.theme);$$('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.theme===state.theme)); const accent=getComputedStyle(document.body).getPropertyValue('--accent').trim(); let meta=document.querySelector('meta[name=theme-color]'); if(!meta){meta=document.createElement('meta'); meta.name='theme-color'; document.head.appendChild(meta);} if(accent) meta.content=accent;}
+    function renderSyncStatus(){
+      const badge=$('#syncStatusBadge'); if(!badge) return;
+      const status=String(state.syncStatus?.status||'LOCAL').toUpperCase();
+      const pending=Math.max(0,Number(state.syncStatus?.pendingCount||0));
+      badge.className='sync-status';
+      if(status==='SYNCING'){badge.classList.add('syncing');badge.textContent=`正在同步${pending?` · ${pending}项待处理`:''}`;return}
+      if(status==='OFFLINE'){badge.classList.add('offline');badge.textContent=`离线可编辑${pending?` · ${pending}项待同步`:''}`;return}
+      if(['FAILED','CONFLICT','AUTH_REQUIRED'].includes(status)){badge.classList.add('failed');badge.textContent=`${status==='CONFLICT'?'存在同步冲突':'同步失败'}${pending?` · ${pending}项待同步`:''}`;return}
+      badge.textContent=pending?`本地已保存 · ${pending}项待同步`:'已同步';
+    }
     function showLoginPanel(){ $('#loginPanel')?.classList.remove('hidden'); $('#registerPanel')?.classList.add('hidden'); }
     function showRegisterPanel(){ $('#registerPanel')?.classList.remove('hidden'); $('#loginPanel')?.classList.add('hidden'); }
-    async function api(path, opts={}, authToken=state.token){const res=await fetch(path,{headers:{'Content-Type':'application/json',...(authToken?{'x-user-token':authToken}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok) throw new Error(data.message||'请求失败'); return data;}
+    function hasLocalBridge(){return IS_NATIVE_APP}
+    const nativeRequests=new Map(); let nativeRequestSequence=0;
+    window.__xiaodeNativeResolve=(requestId,envelopeValue)=>{
+      const pending=nativeRequests.get(String(requestId)); if(!pending) return;
+      nativeRequests.delete(String(requestId)); clearTimeout(pending.timer);
+      let envelope=envelopeValue;
+      try{if(typeof envelope==='string') envelope=JSON.parse(envelope)}catch{envelope={ok:false,message:'本地响应格式无效'}}
+      if(envelope?.ok!==false){pending.resolve(envelope?.data??envelope??{});return;}
+      const error=new Error(envelope?.message||envelope?.data?.message||'本地请求失败'); error.status=Number(envelope?.status||0); error.data=envelope?.data; pending.reject(error);
+    };
+    function localBridgeRequest(path,opts={},authToken=state.token){
+      return new Promise((resolve,reject)=>{
+        const requestId=`web-${Date.now()}-${++nativeRequestSequence}`;
+        const timer=setTimeout(()=>{nativeRequests.delete(requestId);reject(new Error('本地数据请求超时，请重试'));},30000);
+        nativeRequests.set(requestId,{resolve,reject,timer});
+        try{window.XiaoDeLocalBridge.request(requestId,String(opts.method||'GET').toUpperCase(),String(path),String(opts.body||''),String(authToken||''));}
+        catch(error){clearTimeout(timer);nativeRequests.delete(requestId);reject(error)}
+      });
+    }
+    async function api(path, opts={}, authToken=state.token){
+      if(hasLocalBridge()) return localBridgeRequest(path,opts,authToken);
+      const res=await fetch(path,{headers:{'Content-Type':'application/json',...(authToken?{'x-user-token':authToken}:{})},...opts}); const text=await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}} if(!res.ok){const error=new Error(data.message||'请求失败');error.status=res.status;error.data=data;throw error} return data;
+    }
+    function nativeServerUrl(){try{return hasLocalBridge()&&typeof window.XiaoDeLocalBridge.getServerUrl==='function'?String(window.XiaoDeLocalBridge.getServerUrl()||''):location.origin}catch{return location.origin}}
+    const externalScriptPromises=new Map();
+    function loadExternalScript(url,globalName,integrity){
+      if(window[globalName]) return Promise.resolve(window[globalName]);
+      if(externalScriptPromises.has(url)) return externalScriptPromises.get(url);
+      const promise=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=url;script.async=true;script.integrity=integrity;script.crossOrigin='anonymous';script.referrerPolicy='no-referrer';script.onload=()=>window[globalName]?resolve(window[globalName]):reject(new Error(`${globalName} 未加载`));script.onerror=()=>reject(new Error('该文件格式需要联网加载解析组件'));document.head.appendChild(script)});
+      externalScriptPromises.set(url,promise); return promise;
+    }
+    const ensureXlsx=()=>loadExternalScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js','XLSX','sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw');
+    const ensurePdf=()=>loadExternalScript('https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js','pdfjsLib','sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e').then(lib=>{lib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';return lib});
     
     function currentPreferenceSnapshot(){
       return {
@@ -811,16 +867,29 @@
       {slot:11,label:'第11节',start:'19:10',end:'19:55',range:'19:10-19:55'},
       {slot:12,label:'第12节',start:'20:05',end:'20:50',range:'20:05-20:50'}
     ];
-    function normalizeClientSlots(slots=[]){
+    function normalizeLegacyClientSlots(slots=[]){
       const by=new Map((Array.isArray(slots)?slots:[]).map(s=>[Number(s.slot),s]));
       return DEFAULT_12_SLOTS.map(d=>{
         const old=by.get(Number(d.slot))||{};
         const start=String(old.start||String(old.range||'').split('-')[0]||d.start);
         const end=String(old.end||String(old.range||'').split('-')[1]||d.end);
-        return {slot:Number(d.slot),label:String(old.label||d.label),start,end,range:(start&&end)?`${start}-${end}`:d.range};
+        return {slot:Number(d.slot),logicalOrder:Number(d.slot),slotKey:String(old.slotKey||`P${d.slot}`),sourceSlot:Number(old.sourceSlot||d.slot),displayNumber:Number(old.displayNumber||d.slot),kind:String(old.kind||'REGULAR'),visibilityPolicy:String(old.visibilityPolicy||'ALWAYS'),label:String(old.label||d.label),start,end,range:(start&&end)?`${start}-${end}`:d.range};
       });
     }
-    function visibleSlots(){ return normalizeClientSlots(state.slots).filter(s=>!(state.hideFifthSlot && Number(s.slot)===5)); }
+    function normalizeClientSlots(slots=[],template=state.scheduleTemplate){
+      if(template?.periods?.length&&SCHEDULE_TEMPLATE_API?.projectTemplateToSlots) return SCHEDULE_TEMPLATE_API.projectTemplateToSlots(template);
+      return normalizeLegacyClientSlots(slots);
+    }
+    function allTemplateSlots(){return normalizeClientSlots(state.slots,state.scheduleTemplate)}
+    function visibleSlots(){
+      let slots=allTemplateSlots();
+      if(state.scheduleTemplate?.periods?.length&&SCHEDULE_TEMPLATE_API?.visiblePeriodsForWeek){
+        const visibleKeys=new Set(SCHEDULE_TEMPLATE_API.visiblePeriodsForWeek(state.scheduleTemplate,state.courses,getSelectedWeek()).map(period=>period.slotKey));
+        slots=slots.filter(slot=>visibleKeys.has(slot.slotKey));
+      }
+      if(state.hideFifthSlot&&String(state.scheduleTemplate?.templateId||'legacy-default').startsWith('legacy')) slots=slots.filter(slot=>Number(slot.sourceSlot||slot.slot)!==5);
+      return slots;
+    }
     function weekDateObject(day, week=getSelectedWeek()){
       return TERM_CALENDAR.dateForDisplayedDay(getTermCalendarStateForUi(new Date(),week),Number(day));
     }
@@ -847,7 +916,17 @@
     function getWeek(now=new Date()){return getTermCalendarStateForUi(now).actualWeek;}
     function getSelectedWeek(){return getTermCalendarStateForUi().displayedWeek;}
     function getDayIndex(now=new Date()){const d=now.getDay(); return d===0?7:d}
-    function getSlot(num){return state.slots.find(s=>Number(s.slot)===Number(num))||{label:'',range:'',start:'00:00',end:'00:00'}}
+    function getSlot(num,slotKey=''){return allTemplateSlots().find(s=>(slotKey&&s.slotKey===slotKey)||Number(s.slot)===Number(num))||{label:'',range:'',start:'00:00',end:'00:00',slotKey:''}}
+    function slotPayload(slotValue){
+      const period=getSlot(Number(slotValue));
+      return {slot:Number(period.slot||slotValue),startSlot:Number(period.slot||slotValue),endSlot:Number(period.slot||slotValue),sourceStartSlot:period.sourceSlot??Number(slotValue),sourceEndSlot:period.sourceSlot??Number(slotValue),startSlotKey:period.slotKey||`P${slotValue}`,endSlotKey:period.slotKey||`P${slotValue}`,scheduleTemplateId:state.scheduleTemplate?.templateId||'legacy-default'};
+    }
+    function slotRangePayload(startValue,endValue=startValue){
+      const start=getSlot(Number(startValue)); const end=getSlot(Number(endValue));
+      const startSlot=Number(start.slot||startValue), endSlot=Number(end.slot||endValue);
+      if(!Number.isInteger(startSlot)||!Number.isInteger(endSlot)||endSlot<startSlot) throw new Error('结束节次不能早于开始节次');
+      return {slot:startSlot,startSlot,endSlot,sourceStartSlot:start.sourceSlot??startSlot,sourceEndSlot:end.sourceSlot??endSlot,startSlotKey:start.slotKey||`P${startSlot}`,endSlotKey:end.slotKey||`P${endSlot}`,scheduleTemplateId:state.scheduleTemplate?.templateId||'legacy-default'};
+    }
     function normalizeCourseText(value){ return String(value??'').replace(/\s+/g,' ').trim(); }
     function firstCourseText(...values){ for(const value of values){ const text=normalizeCourseText(value); if(text) return text; } return ''; }
     function courseWeeks(c){ return [...new Set((Array.isArray(c?.weeks)?c.weeks:[]).map(Number).filter(Number.isInteger))].sort((a,b)=>a-b); }
@@ -858,17 +937,18 @@
     function courseCoversSlot(c,slot){ const value=Number(slot); return Number.isInteger(value)&&value>=courseStartSlot(c)&&value<=courseEndSlot(c); }
     function activeInWeek(c,w){return effectiveCourseWeeks(c).includes(Number(w))}
     function coursesForWeek(w){return state.courses.filter(c=>activeInWeek(c,w)).sort((a,b)=>(a.day-b.day)||(courseStartSlot(a)-courseStartSlot(b)))}
-    function nowCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&m>=timeToMin(getSlot(courseStartSlot(c)).start)&&m<=timeToMin(getSlot(courseEndSlot(c)).end))||null}
-    function nextCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)>d||(Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m))||null}
-    function soonCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c)).start)>m&&timeToMin(getSlot(courseStartSlot(c)).start)-m<=10)||null}
-    function courseMergeKey(c){ return [c.accountId||'',c.termKey||'',Number(c.day||c.weekday||0),firstCourseText(c.name,c.courseName),courseWeeksFingerprint(c),firstCourseText(c.location,c.room),c.teacher||''].map(normalizeCourseText).join('|'); }
-    function courseExactKey(c){ return `${courseMergeKey(c)}|${courseStartSlot(c)}-${courseEndSlot(c)}`; }
+    function nowCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&m>=timeToMin(getSlot(courseStartSlot(c),c.startSlotKey).start)&&m<=timeToMin(getSlot(courseEndSlot(c),c.endSlotKey).end))||null}
+    function nextCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)>d||(Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c),c.startSlotKey).start)>m))||null}
+    function soonCourse(now=new Date()){const calendar=getTermCalendarStateForUi(now); if(calendar.status!=='active') return null; const w=calendar.actualWeek,d=getDayIndex(now),m=now.getHours()*60+now.getMinutes(); return coursesForWeek(w).find(c=>Number(c.day)===d&&timeToMin(getSlot(courseStartSlot(c),c.startSlotKey).start)>m&&timeToMin(getSlot(courseStartSlot(c),c.startSlotKey).start)-m<=10)||null}
+    function courseMergeKey(c){ return [c.accountId||'',c.termKey||'',c.scheduleTemplateId||'',Number(c.day||c.weekday||0),firstCourseText(c.name,c.courseName),courseWeeksFingerprint(c),firstCourseText(c.location,c.room),c.teacher||''].map(normalizeCourseText).join('|'); }
+    function courseExactKey(c){ return `${courseMergeKey(c)}|${c.startSlotKey||courseStartSlot(c)}-${c.endSlotKey||courseEndSlot(c)}`; }
     // LOGICAL_COURSE_RANGE_HELPERS_START
     function buildLogicalCourseItems(records=[],options={}){
       const identityOf=options.identityOf||courseMergeKey;
       const exactOf=options.exactOf||courseExactKey;
       const startOf=options.startOf||courseStartSlot;
       const endOf=options.endOf||courseEndSlot;
+      const canMergeAdjacent=options.canMergeAdjacent||((last,record,startSlot)=>startSlot===last.endSlot+1);
       const weeksKnownOf=options.weeksKnownOf||((record)=>{
         const weeks=[...new Set((Array.isArray(record?.weeks)?record.weeks:[]).map(Number).filter(Number.isInteger))];
         const parity=String(record?.oddEven||'all');
@@ -889,7 +969,7 @@
           const weeksKnown=Boolean(weeksKnownOf(record));
           const recordIds=[...new Set(idsOf(record))];
           const last=merged[merged.length-1];
-          if(last && last.weeksKnown && weeksKnown && startSlot===last.endSlot+1){
+          if(last && last.weeksKnown && weeksKnown && canMergeAdjacent(last,record,startSlot,endSlot)){
             last.endSlot=endSlot;
             last.span=last.endSlot-last.startSlot+1;
             last.courses.push(record);
@@ -919,7 +999,13 @@
     function itemHasVisibleSlot(item,slots=visibleSlots()){ return slots.some(slot=>Number(slot.slot)>=item.startSlot&&Number(slot.slot)<=item.endSlot); }
     function logicalItemsForDay(day,week,slots=visibleSlots()){
       const records=state.courses.filter(c=>Number(c.day)===Number(day)&&activeInWeek(c,week));
-      return buildLogicalCourseItems(records).filter(item=>itemHasVisibleSlot(item,slots));
+      const canMergeAdjacent=(last,record,startSlot)=>{
+        if(!SCHEDULE_TEMPLATE_API?.templateRangesAreAdjacent||!state.scheduleTemplate) return startSlot===last.endSlot+1;
+        const lastEnd=getSlot(last.endSlot);
+        const projected={...last.course,endSlot:last.endSlot,endSlotKey:lastEnd.slotKey||last.course.endSlotKey};
+        return SCHEDULE_TEMPLATE_API.templateRangesAreAdjacent(projected,record,state.scheduleTemplate);
+      };
+      return buildLogicalCourseItems(records,{canMergeAdjacent}).filter(item=>itemHasVisibleSlot(item,slots));
     }
     function overlapComponentsForDay(day,week,slots=visibleSlots()){ return buildOverlapComponents(logicalItemsForDay(day,week,slots)); }
     function visibleRangePlacement(range,slots=visibleSlots()){
@@ -951,11 +1037,13 @@
       if(settings.showClassGroup && classGroup) meta.push(`<span class="course-field course-class-group module-class-group">${escapeHtml(classGroup)}</span>`);
       const start=Number(opts.startSlot??courseStartSlot(c));
       const end=Number(opts.endSlot??courseEndSlot(c));
-      const section=settings.showSectionRange && end>start?`<div class="course-section">${start}-${end}节</div>`:'';
+      const startPeriod=getSlot(start,c.startSlotKey); const endPeriod=getSlot(end,c.endSlotKey);
+      const startLabel=startPeriod.displayNumber??startPeriod.label??start; const endLabel=endPeriod.displayNumber??endPeriod.label??end;
+      const section=settings.showSectionRange && end>start?`<div class="course-section">${escapeHtml(startLabel)}-${escapeHtml(endLabel)}节</div>`:'';
       return {name:escapeHtml(name),meta:meta.join(''),section};
     }
-    function buildCourse(c,cls='',opts={}){ const fields=formatCourseCardFields(c,opts); return `<div class="course ${cls}" data-id="${c.id}" title="${escapeHtml(c.name||'')}" style="background:${STYLE[c.category]||STYLE.custom}">${cls?`<div class="mark">${cls==='current'?'进行中':'即将上课'}</div>`:''}<div class="name">${fields.name}</div>${fields.meta?`<div class="meta2">${fields.meta}</div>`:''}${fields.section}</div>`}
-    function fillSelectors(){ $('#courseDay').innerHTML=DAYS.map((d,i)=>`<option value="${i+1}">${d}</option>`).join(''); $('#courseSlot').innerHTML=visibleSlots().map(s=>`<option value="${s.slot}">${s.label}</option>`).join(''); }
+    function buildCourse(c,cls='',opts={}){ const fields=formatCourseCardFields(c,opts); return `<div class="course ${cls}" data-id="${escapeHtml(c.id||'')}" title="${escapeHtml(c.name||'')}" style="background:${STYLE[c.category]||STYLE.custom}">${cls?`<div class="mark">${cls==='current'?'进行中':'即将上课'}</div>`:''}<div class="name">${fields.name}</div>${fields.meta?`<div class="meta2">${fields.meta}</div>`:''}${fields.section}</div>`}
+    function fillSelectors(){ const options=allTemplateSlots().map(s=>`<option value="${Number(s.slot)}" data-slot-key="${escapeHtml(s.slotKey||'')}">${escapeHtml(s.label||'')} ${escapeHtml(s.range||'')}</option>`).join(''); $('#courseDay').innerHTML=DAYS.map((d,i)=>`<option value="${i+1}">${d}</option>`).join(''); $('#courseSlot').innerHTML=options; if($('#courseEndSlot')) $('#courseEndSlot').innerHTML=options; }
     function renderAuthState(loggedIn){
   $('#heroSection')?.classList.add('hidden');
   $('#accountAvatarBtn')?.classList.add('hidden');
@@ -1232,7 +1320,7 @@
       }).join('')}`;
       slots.forEach((slot,slotIdx)=>{
         const row=slotIdx+2;
-        html+=`<div class="timecell" style="grid-column:1;grid-row:${row}"><div class="name" style="font-size:19px;color:var(--text)">${slot.slot}</div><div class="muted">${slot.range}</div></div>`;
+        html+=`<div class="timecell" style="grid-column:1;grid-row:${row}"><div class="name" style="font-size:${slot.kind==='MIDDAY_EXTENSION'?'13':'17'}px;color:var(--text)">${escapeHtml(slot.label||slot.slot)}</div><div class="muted">${escapeHtml(slot.range)}</div></div>`;
       });
       for(let day=1; day<=7; day++){
         const todayCls=(calendar.todayInDisplayedWeek&&day===today)?'today':'';
@@ -1270,54 +1358,62 @@
     function renderSlots(){
       const table=$('#slotsTable');
       if(!table) return;
-      state.slots=normalizeClientSlots(state.slots);
-      table.innerHTML=`<tr><th>节次</th><th>名称</th><th>开始</th><th>结束</th></tr>` + state.slots.map(s=>`<tr data-slot="${Number(s.slot)}">
-        <td class="slot-num">${Number(s.slot)}</td>
+      state.slots=allTemplateSlots();
+      table.innerHTML=`<tr><th>来源</th><th>显示号</th><th>名称</th><th>开始</th><th>结束</th><th>显示</th></tr>` + state.slots.map(s=>`<tr data-slot="${Number(s.slot)}" data-slot-key="${escapeHtml(s.slotKey||'')}">
+        <td class="slot-num">${s.sourceSlot==null?'—':`源${Number(s.sourceSlot)}`}</td>
+        <td><input data-field="displayNumber" type="number" min="1" max="60" value="${s.displayNumber==null?'':Number(s.displayNumber)}" style="width:64px" /></td>
         <td><input data-field="label" value="${escapeHtml(s.label||('第'+s.slot+'节'))}" /></td>
         <td><input data-field="start" type="time" value="${escapeHtml(s.start||String(s.range||'').split('-')[0]||'')}" /></td>
         <td><input data-field="end" type="time" value="${escapeHtml(s.end||String(s.range||'').split('-')[1]||'')}" /></td>
+        <td><select data-field="visibilityPolicy"><option value="ALWAYS" ${s.visibilityPolicy==='ALWAYS'?'selected':''}>始终</option><option value="AUTO" ${s.visibilityPolicy==='AUTO'?'selected':''}>有课自动</option></select><div class="muted">${escapeHtml(s.kind||'REGULAR')}</div></td>
       </tr>`).join('');
       const saveBtn=$('#saveSlotsBtn');
       const resetBtn=$('#resetSlotsBtn');
       const hideBtn=$('#hideFifthSlotBtn');
       if(saveBtn) saveBtn.onclick=saveSlotTimes;
       if(resetBtn) resetBtn.onclick=resetSlotTimes;
-      if(hideBtn){ hideBtn.textContent=state.hideFifthSlot?'显示第5节':'隐藏第5节'; hideBtn.onclick=()=>setHideFifthSlot(!state.hideFifthSlot); }
+      if(hideBtn){ hideBtn.textContent=String(state.scheduleTemplate?.templateId||'').startsWith('legacy')?(state.hideFifthSlot?'显示旧第5行':'隐藏旧第5行'):'特殊课节按有课自动显示'; hideBtn.disabled=!String(state.scheduleTemplate?.templateId||'').startsWith('legacy'); hideBtn.onclick=()=>setHideFifthSlot(!state.hideFifthSlot); }
     }
 
-        function collectSlotTimes(){
+    function collectScheduleTemplate(){
       const rows=$$('#slotsTable tr[data-slot]');
-      const slots=rows.map((row,idx)=>{
+      const currentPeriods=new Map((state.scheduleTemplate?.periods||[]).map(period=>[period.slotKey,period]));
+      const periods=rows.map((row,idx)=>{
         const slot=Number(row.dataset.slot||idx+1);
+        const slotKey=row.dataset.slotKey||`P${slot}`;
+        const current=currentPeriods.get(slotKey)||allTemplateSlots().find(item=>item.slotKey===slotKey)||{};
         const label=row.querySelector('[data-field="label"]')?.value.trim() || `第${slot}节`;
         const start=row.querySelector('[data-field="start"]')?.value.trim() || '';
         const end=row.querySelector('[data-field="end"]')?.value.trim() || '';
-        return {slot,label,start,end,range:(start&&end)?`${start}-${end}`:''};
+        const displayRaw=row.querySelector('[data-field="displayNumber"]')?.value.trim()||'';
+        return {...current,slotKey,sourceSlot:current.sourceSlot??null,logicalOrder:slot,displayNumber:displayRaw?Number(displayRaw):null,displayLabel:label,startTime:start,endTime:end,kind:current.kind||'REGULAR',visibilityPolicy:row.querySelector('[data-field="visibilityPolicy"]')?.value||current.visibilityPolicy||'ALWAYS'};
       });
-      if(!slots.length) throw new Error('没有可保存的节次');
-      for(const s of slots){
-        if(!/^\d{2}:\d{2}$/.test(s.start)||!/^\d{2}:\d{2}$/.test(s.end)) throw new Error(`${s.label} 的开始/结束时间不完整`);
-        if(timeToMin(s.start)>=timeToMin(s.end)) throw new Error(`${s.label} 的结束时间要晚于开始时间`);
+      if(!periods.length) throw new Error('没有可保存的节次');
+      for(const period of periods){
+        if(!/^\d{2}:\d{2}$/.test(period.startTime)||!/^\d{2}:\d{2}$/.test(period.endTime)) throw new Error(`${period.displayLabel} 的开始/结束时间不完整`);
+        if(timeToMin(period.startTime)>=timeToMin(period.endTime)) throw new Error(`${period.displayLabel} 的结束时间要晚于开始时间`);
       }
-      return slots;
+      return {...(state.scheduleTemplate||{}),periods};
     }
     async function saveSlotTimes(){
       try{
-        const slots=collectSlotTimes();
-        const data=await api('/api/my/slots',{method:'PUT',body:JSON.stringify({slots})});
-        state.slots=normalizeClientSlots(data.slots||slots);
+        const scheduleTemplate=collectScheduleTemplate();
+        const data=await api('/api/my/schedule-template',{method:'PUT',body:JSON.stringify(scheduleTemplate)});
+        state.scheduleTemplate=data.scheduleTemplate||scheduleTemplate;
+        state.slots=normalizeClientSlots(data.slots||[],state.scheduleTemplate);
         fillSelectors();
         renderAll();
         renderSlots();
         syncWidgetNow('saveSlotTimes');
-        toast('节次时间已保存');
+        toast('课程时间表已保存，原始节次映射保持不变');
       }catch(e){toast(e.message||'保存失败')}
     }
     async function resetSlotTimes(){
       if(!confirm('恢复默认节次时间？课程不会被删除。')) return;
       try{
         const data=await api('/api/my/slots',{method:'DELETE'});
-        state.slots=normalizeClientSlots(data.slots||state.slots);
+        state.scheduleTemplate=data.scheduleTemplate||state.scheduleTemplate;
+        state.slots=normalizeClientSlots(data.slots||state.slots,state.scheduleTemplate);
         fillSelectors();
         renderAll();
         renderSlots();
@@ -1513,11 +1609,11 @@
 
   const html = list.map(c => `
     <div class="detail" style="margin-bottom:10px">
-      <div style="font-weight:900;font-size:18px">${c.name}</div>
-      <div>时间：${DAYS[c.day-1]} · ${getSlot(c.slot).label} (${getSlot(c.slot).range})</div>
-      <div>地点：${c.location || '--'}</div>
-      <div>老师：${c.teacher || '--'}</div>
-      <div>周次：${c.weekText || '--'}</div>
+      <div style="font-weight:900;font-size:18px">${escapeHtml(c.name||'')}</div>
+      <div>时间：${escapeHtml(DAYS[c.day-1]||'')} · ${escapeHtml(getSlot(courseStartSlot(c),c.startSlotKey).label||'')} (${escapeHtml(getSlot(courseStartSlot(c),c.startSlotKey).range||'')})</div>
+      <div>地点：${escapeHtml(c.location || '--')}</div>
+      <div>老师：${escapeHtml(c.teacher || '--')}</div>
+      <div>周次：${escapeHtml(c.weekText || '--')}</div>
     </div>
   `).join('');
 
@@ -1538,12 +1634,12 @@
               <div class="row module-location"><label>地点 / 教室</label><input id="modalCourseLocation" placeholder="例如：博文楼0117" autocomplete="off" /></div>
               <div class="row module-class-group"><label>班级</label><input id="modalCourseClassGroup" placeholder="可选" autocomplete="off" /></div>
               <div class="row"><label>星期</label><select id="modalCourseDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${i+1===day?'selected':''}>${d}</option>`).join('')}</select></div>
-              <div class="row"><label>节次</label><select id="modalCourseSlot">${state.slots.map(s=>`<option value="${s.slot}" ${Number(s.slot)===slot?'selected':''}>${s.label} ${s.range||''}</option>`).join('')}</select></div>
+              <div class="row"><label>节次</label><select id="modalCourseSlot">${allTemplateSlots().map(s=>`<option value="${Number(s.slot)}" ${Number(s.slot)===slot?'selected':''}>${escapeHtml(s.label||'')} ${escapeHtml(s.range||'')}</option>`).join('')}</select></div>
               <div class="row"><label>周次</label><input id="modalCourseWeekText" value="1-${totalWeeks()}周" autocomplete="off" /></div>
               <div class="row"><label>单双周</label><select id="modalCourseOddEven"><option value="all">全部</option><option value="odd">单周</option><option value="even">双周</option></select></div>
               <div class="row"><label>分类</label><select id="modalCourseCategory"><option value="public_required">公共必修</option><option value="major_required">专业必修</option><option value="major_elective">专业选修</option><option value="public_elective">公共选修</option><option value="lab">实验</option><option value="custom">自定义</option></select></div>
             </div>
-            <div class="detail" style="margin-top:10px">位置：${DAYS[day-1]} · ${slotInfo.label||('第'+slot+'节')} ${slotInfo.range||''}</div>
+            <div class="detail" style="margin-top:10px">位置：${escapeHtml(DAYS[day-1]||'')} · ${escapeHtml(slotInfo.label||('第'+slot+'节'))} ${escapeHtml(slotInfo.range||'')}</div>
             <div class="inline modal-actions-sticky"><button class="btn primary" id="modalSaveCourseBtn" type="button">保存到课表</button><button class="btn ghost" id="modalCancelCourseBtn" type="button">取消</button></div>
           `);
           const saveBtn=$('#modalSaveCourseBtn');
@@ -1560,7 +1656,7 @@
                   location:($('#modalCourseLocation')?.value||'').trim(),
                   classGroup:($('#modalCourseClassGroup')?.value||'').trim(),
                   day:Number($('#modalCourseDay')?.value||day),
-                  slot:Number($('#modalCourseSlot')?.value||slot),
+                  ...slotPayload(Number($('#modalCourseSlot')?.value||slot)),
                   weekText:($('#modalCourseWeekText')?.value||`1-${totalWeeks()}周`).trim(),
                   oddEven:$('#modalCourseOddEven')?.value||'all',
                   category:$('#modalCourseCategory')?.value||'custom'
@@ -1585,9 +1681,9 @@
             };
           }
         }
-        function openCourse(id){ const c=state.courses.find(x=>x.id===id); if(!c) return; openModal(c.shortName?`${c.shortName} · ${c.name}`:c.name,`<div class="detail"><div>全称：${c.name||'--'}</div><div>简称：${c.shortName||'--'}</div><div>老师：${c.teacher||'--'}</div><div>地点：${c.location||'--'}</div><div>班级：${c.classGroup||'--'}</div><div>时间：${DAYS[c.day-1]} · ${getSlot(c.slot).label} (${getSlot(c.slot).range})</div><div>周次：${c.weekText||'--'}</div><div style="margin-top:8px"><span class="tag">${c.category}</span></div></div><div class="inline"><button class="btn primary" id="editFromModal">编辑这门课</button></div>`); $('#editFromModal').onclick=()=>{loadCourseToForm(c); closeModal(); openManagePanel('course');}; }
-    function loadCourseToForm(c){ state.editingCourse=c; $('#courseName').value=c.name||''; $('#courseShortName').value=c.shortName||''; $('#courseTeacher').value=c.teacher||''; $('#courseLocation').value=c.location||''; $('#courseClassGroup').value=c.classGroup||''; $('#courseDay').value=c.day; $('#courseSlot').value=c.slot; $('#courseWeekText').value=c.weekText||''; $('#courseOddEven').value=c.oddEven||'all'; $('#courseCategory').value=c.category||'custom'; $('#deleteCourseBtn').classList.remove('hidden'); toast(`正在编辑：${c.name}`); }
-    function clearCourseForm(){ state.editingCourse=null; $('#courseName').value=''; $('#courseShortName').value=''; $('#courseTeacher').value=''; $('#courseLocation').value=''; $('#courseClassGroup').value=''; $('#courseWeekText').value=''; $('#courseDay').value='1'; $('#courseSlot').value=String(state.slots[0]?.slot||1); $('#courseOddEven').value='all'; $('#courseCategory').value='public_required'; $('#deleteCourseBtn').classList.add('hidden'); }
+        function openCourse(id){ const c=state.courses.find(x=>x.id===id); if(!c) return; const start=getSlot(courseStartSlot(c),c.startSlotKey); openModal(c.shortName?`${c.shortName} · ${c.name}`:c.name,`<div class="detail"><div>全称：${escapeHtml(c.name||'--')}</div><div>简称：${escapeHtml(c.shortName||'--')}</div><div>老师：${escapeHtml(c.teacher||'--')}</div><div>地点：${escapeHtml(c.location||'--')}</div><div>班级：${escapeHtml(c.classGroup||'--')}</div><div>时间：${escapeHtml(DAYS[c.day-1]||'')} · ${escapeHtml(start.label||'')} (${escapeHtml(start.range||'')})</div><div>周次：${escapeHtml(c.weekText||'--')}</div><div style="margin-top:8px"><span class="tag">${escapeHtml(c.category||'custom')}</span></div></div><div class="inline"><button class="btn primary" id="editFromModal">编辑这门课</button></div>`); $('#editFromModal').onclick=()=>{loadCourseToForm(c); closeModal(); openManagePanel('course');}; }
+    function loadCourseToForm(c){ state.editingCourse=c; $('#courseName').value=c.name||''; $('#courseShortName').value=c.shortName||''; $('#courseTeacher').value=c.teacher||''; $('#courseLocation').value=c.location||''; $('#courseClassGroup').value=c.classGroup||''; $('#courseDay').value=c.day; $('#courseSlot').value=courseStartSlot(c); if($('#courseEndSlot')) $('#courseEndSlot').value=courseEndSlot(c); $('#courseWeekText').value=c.weekText||''; $('#courseOddEven').value=c.oddEven||'all'; $('#courseCategory').value=c.category||'custom'; $('#deleteCourseBtn').classList.remove('hidden'); toast(`正在编辑：${c.name}`); }
+    function clearCourseForm(){ state.editingCourse=null; $('#courseName').value=''; $('#courseShortName').value=''; $('#courseTeacher').value=''; $('#courseLocation').value=''; $('#courseClassGroup').value=''; $('#courseWeekText').value=''; $('#courseDay').value='1'; const first=String(state.slots[0]?.slot||1); $('#courseSlot').value=first; if($('#courseEndSlot')) $('#courseEndSlot').value=first; $('#courseOddEven').value='all'; $('#courseCategory').value='public_required'; $('#deleteCourseBtn').classList.add('hidden'); }
     function parseCsv(text){ const rows=text.trim().split(/\r?\n/).map(r=>r.split(/\t|,/)); if(!rows.length) return []; const headers=rows[0].map(h=>String(h).trim()); return rows.slice(1).filter(r=>r.some(Boolean)).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??'']))); }
     function normalizeHeader(h){ return String(h||'').replace(/\s+/g,'').toLowerCase(); }
     function pick(obj, keys){ for(const key of keys){ const found = Object.keys(obj).find(k=>normalizeHeader(k)===normalizeHeader(key)); if(found && obj[found]!==undefined && obj[found]!==null && String(obj[found]).trim()!=='') return obj[found]; } return ''; }
@@ -1595,7 +1691,7 @@
     function mapSlot(value){ const raw = String(value||'').replace(/\s+/g,''); const nums = raw.match(/\d+/g); if(!nums) return Number(raw)||0; if(/1-2/.test(raw)) return 1; if(/3-4/.test(raw)) return 2; if(/6-7/.test(raw)) return 3; if(/8-9/.test(raw)) return 4; if(/10-11/.test(raw)) return 5; if(/12-13/.test(raw)) return 6; return Number(nums[0])||0; }
     function inferOddEven(weekText){ const t=String(weekText||''); if(t.includes('单')) return 'odd'; if(t.includes('双')) return 'even'; return 'all'; }
     function inferCategory(text){ const t=String(text||''); if(t.includes('实验')) return 'lab'; if(t.includes('思想')||t.includes('体育')||t.includes('英语')||t.includes('形势与政策')) return 'public_required'; if(t.includes('化学')||t.includes('俄语')||t.includes('监测')||t.includes('生物')) return 'major_required'; return 'custom'; }
-    function normalizeImported(rows){ return rows.map(r=>{ const weekText = pick(r,['weekText','周次','周数','周次说明','上课周次','周别']) || `1-${totalWeeks()}周`; return ({ day:mapDay(pick(r,['day','星期','周几','星期几','星期'])), slot:mapSlot(pick(r,['slot','节次','上课节次','节','节次范围','时间段'])), name:String(pick(r,['name','课程名','课程名称','课程'])||'').replace(/[☆★▲※]/g,'').trim(), shortName:pick(r,['shortName','简称','课程简称'])||'', teacher:pick(r,['teacher','老师','教师','任课教师'])||'', location:pick(r,['location','地点','场地','教室','上课地点','教室地点'])||'', classGroup:pick(r,['classGroup','班级','上课班级'])||'', weekText, oddEven:pick(r,['oddEven','单双周']) || inferOddEven(weekText), category:pick(r,['category','分类','课程类别']) || inferCategory(pick(r,['name','课程名','课程名称','课程'])) }); }).filter(r=>r.name&&r.day&&r.slot); }
+    function normalizeImported(rows){ return rows.map(r=>{ const weekText = pick(r,['weekText','周次','周数','周次说明','上课周次','周别']) || `1-${totalWeeks()}周`; const sourceSlot=mapSlot(pick(r,['sourceSlot','原始节次','slot','节次','上课节次','节','节次范围','时间段'])); const mapped=state.scheduleTemplate&&SCHEDULE_TEMPLATE_API?.normalizeCourseSlotFields?SCHEDULE_TEMPLATE_API.normalizeCourseSlotFields({sourceStartSlot:sourceSlot,sourceEndSlot:sourceSlot},state.scheduleTemplate):slotPayload(sourceSlot); return ({ day:mapDay(pick(r,['day','星期','周几','星期几','星期'])), ...(mapped||slotPayload(sourceSlot)), name:String(pick(r,['name','课程名','课程名称','课程'])||'').replace(/[☆★▲※]/g,'').trim(), shortName:pick(r,['shortName','简称','课程简称'])||'', teacher:pick(r,['teacher','老师','教师','任课教师'])||'', location:pick(r,['location','地点','场地','教室','上课地点','教室地点'])||'', classGroup:pick(r,['classGroup','班级','上课班级'])||'', weekText, oddEven:pick(r,['oddEven','单双周']) || inferOddEven(weekText), category:pick(r,['category','分类','课程类别']) || inferCategory(pick(r,['name','课程名','课程名称','课程'])) }); }).filter(r=>r.name&&r.day&&r.slot); }
     function isWeekdayLabel(v){ return /星期[一二三四五六日天]|周[一二三四五六日]/.test(String(v||'')); }
     function buildSheetMatrix(sheet){
       const ref = sheet['!ref']; if(!ref) return [];
@@ -1665,9 +1761,9 @@
       return [...uniq.values()];
     }
     function rowsFromPdfText(text){ const lines = String(text||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean); const out=[]; let currentDay=1; for(const line of lines){ const dayMatch = line.match(/(周一|周二|周三|周四|周五|周六|周日|星期一|星期二|星期三|星期四|星期五|星期六|星期日)/); if(dayMatch) currentDay = mapDay(dayMatch[1]); const m = line.match(/^(\d+\s*-\s*\d+)\s+(.+?)\s*[☆★▲※]?\s+周(?:数|次)[:：]?\s*([^/]+)\/(?:地点|场地)[:：]?\s*([^/]+)\/教师[:：]?\s*(.+)$/); if(m){ const weekText = m[3].replace(/\s+/g,''); out.push({day: currentDay, slot: mapSlot(m[1]), name: m[2].replace(/[☆★▲※]/g,'').trim(), teacher: m[5].trim(), location: m[4].trim(), weekText, oddEven: inferOddEven(weekText), category: inferCategory(m[2])}); } } return out; }
-    async function parsePdfFile(file){ if(!window.pdfjsLib){ throw new Error('PDF 组件未加载完成，请稍后再试'); } const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({data:buf}).promise; let text=''; for(let i=1;i<=pdf.numPages;i++){ const page = await pdf.getPage(i); const content = await page.getTextContent(); text += content.items.map(it=>it.str).join(' ') + '\n'; } const rows = rowsFromPdfText(text); if(!rows.length) throw new Error('这个 PDF 没提取到可识别课程'); return rows; }
-    function renderAll(){ applyTheme(state.theme); applyCourseSettingsVisibility(); applyTableSize(state.tableSize); updateBottomToolbar(!!state.user); if(!state.meta) return; renderHeader(); updateTrialFeatures(); if(!state.user) return; fillSelectors(); renderWeeks(); renderTable(); renderMobile(); renderSlots(); if($('#profileName')) $('#profileName').value=state.user.name||''; $$('.mode .btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.infoMode)); updateToolbarToggleTile(); updateTableSizeTile(); updateTrialFeatures(); }
-    async function bootPublic(){ const data=await api('/api/public/bootstrap'); state.meta=data.meta; state.slots=normalizeClientSlots(data.slots); renderAll(); }
+    async function parsePdfFile(file){ await ensurePdf(); const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({data:buf}).promise; let text=''; for(let i=1;i<=pdf.numPages;i++){ const page = await pdf.getPage(i); const content = await page.getTextContent(); text += content.items.map(it=>it.str).join(' ') + '\n'; } const rows = rowsFromPdfText(text); if(!rows.length) throw new Error('这个 PDF 没提取到可识别课程'); return rows; }
+    function renderAll(){ applyTheme(state.theme); applyCourseSettingsVisibility(); applyTableSize(state.tableSize); updateBottomToolbar(!!state.user); renderSyncStatus(); if(!state.meta) return; renderHeader(); updateTrialFeatures(); if(!state.user) return; fillSelectors(); renderWeeks(); renderTable(); renderMobile(); renderSlots(); if($('#profileName')) $('#profileName').value=state.user.name||''; $$('.mode .btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===state.infoMode)); updateToolbarToggleTile(); updateTableSizeTile(); updateTrialFeatures(); }
+    async function bootPublic(){ const data=await api('/api/public/bootstrap'); state.meta=data.meta; state.scheduleTemplate=data.scheduleTemplate||state.scheduleTemplate; state.scheduleTemplates=Array.isArray(data.scheduleTemplates)?data.scheduleTemplates:state.scheduleTemplates; state.slots=normalizeClientSlots(data.slots,state.scheduleTemplate); if(data.syncStatus) state.syncStatus=data.syncStatus; renderAll(); return data; }
     async function loadMe({expectedAccountId=''}={}){
       const requestVersion=++state.accountRequestVersion;
       const tokenAtStart=state.token;
@@ -1683,10 +1779,13 @@
       state.switchKey=data.user?.switchKey||data.switchKey||state.switchKey||'';
       if(state.switchKey) localStorage.setItem('xiaodeCurrentSwitchKey',state.switchKey);
       state.meta=data.meta;
-      state.slots=normalizeClientSlots(data.slots);
+      state.scheduleTemplate=data.scheduleTemplate||state.scheduleTemplate;
+      state.scheduleTemplates=Array.isArray(data.scheduleTemplates)?data.scheduleTemplates:state.scheduleTemplates;
+      state.slots=normalizeClientSlots(data.slots,state.scheduleTemplate);
       state.activeTerm=data.activeTerm||null;
       state.availableTerms=Array.isArray(data.availableTerms)?data.availableTerms:[];
       state.courses=(data.courses||[]).filter(course=>course.accountId===state.accountId&&(!state.activeTerm||course.termKey===state.activeTerm.termKey));
+      if(data.syncStatus) state.syncStatus=data.syncStatus;
       clampPreviewWeek();
       if(previousAccountId&&previousAccountId!==state.accountId) latestAndroidImportCode='';
       applyAccountPreferences(data.preferences||{});
@@ -1733,7 +1832,7 @@
       try{
         const raw=JSON.parse(localStorage.getItem('xiaodeSavedAccounts')||'[]');
         const byUser=new Map();
-        raw.filter(x=>x&&x.username&&(x.token||x.switchKey)).forEach(x=>{
+        raw.filter(x=>x&&x.username&&(IS_NATIVE_APP?x.accountId:(x.token||x.switchKey))).forEach(x=>{
           const key=x.accountId||`legacy:${x.username}`;
           const old=byUser.get(key)||{};
           byUser.set(key,{...old,...x});
@@ -1741,13 +1840,13 @@
         return [...byUser.values()];
       }catch{return []}
     }
-    function setSavedAccounts(list){localStorage.setItem('xiaodeSavedAccounts', JSON.stringify(list.slice(0,12)));}
+    function setSavedAccounts(list){const safe=IS_NATIVE_APP?list.map(({token,switchKey,...account})=>account):list;localStorage.setItem('xiaodeSavedAccounts', JSON.stringify(safe.slice(0,12)));}
     function rememberCurrentAccount(){
       if(!state.user||!state.token) return;
       const switchKey = state.switchKey || state.user.switchKey || '';
       const list=getSavedAccounts().filter(x=>x.accountId?x.accountId!==state.accountId:x.username!==state.user.username);
       const lastUsedAt=new Date().toISOString();
-      list.unshift({serverBaseUrl:location.origin,accountId:state.accountId,userId:state.user.id,name:state.user.name||state.user.username,username:state.user.username,token:state.token,switchKey,preferences:currentPreferenceSnapshot(),lastUsedAt,savedAt:lastUsedAt});
+      list.unshift({serverBaseUrl:nativeServerUrl(),accountId:state.accountId,userId:state.user.id,name:state.user.name||state.user.username,username:state.user.username,...(IS_NATIVE_APP?{}:{token:state.token,switchKey}),preferences:currentPreferenceSnapshot(),lastUsedAt,savedAt:lastUsedAt});
       setSavedAccounts(list);
     }
     async function loginAndLoad(username,password){
@@ -1791,6 +1890,13 @@
       if(btn){ btn.disabled=true; btn.textContent='切换中…'; }
       let tokenError=null;
       try{
+        if(IS_NATIVE_APP&&acc.accountId){
+          const r=await api('/api/auth/quick-switch',{method:'POST',body:JSON.stringify({username:acc.username,accountId:acc.accountId,switchKey:''})});
+          state.token=r.token||'native-local-session'; state.switchKey='';
+          const loaded=await loadMe({expectedAccountId:acc.accountId});
+          if(!loaded) return;
+          closeModal(); toast(`已切换到 ${acc.name||acc.username}`); return;
+        }
         if(acc.token){
           state.token=acc.token;
           state.switchKey=acc.switchKey||'';
@@ -1907,7 +2013,7 @@
         });
         $('#renameCurrentAccountBtn') && ($('#renameCurrentAccountBtn').onclick=openRenameAccountModal);
         $('#deleteCurrentAccountBtn') && ($('#deleteCurrentAccountBtn').onclick=openDeleteAccountModal);
-        $('#addAccountBtn') && ($('#addAccountBtn').onclick=()=>{ rememberCurrentAccount(); state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); closeModal(); resetToLoggedOut(); showLoginPanel(); toast('请登录要添加的账号'); window.scrollTo({top:0,behavior:'smooth'}); });
+        $('#addAccountBtn') && ($('#addAccountBtn').onclick=async()=>{ rememberCurrentAccount(); if(hasLocalBridge()&&state.token){try{await api('/api/auth/logout',{method:'POST'})}catch(_){}} state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); closeModal(); resetToLoggedOut(); showLoginPanel(); toast('请登录要添加的账号'); window.scrollTo({top:0,behavior:'smooth'}); });
         $('#switchAccountRefreshBtn') && ($('#switchAccountRefreshBtn').onclick=async()=>{ try{await loadMe(); toast('当前账号已刷新')}catch(e){toast(e.message)} });
         $('#forgetSavedAccountsBtn') && ($('#forgetSavedAccountsBtn').onclick=()=>{ if(confirm('只清除本机保存的快速切换记录，不删除账号。确定？')){ setSavedAccounts([]); closeModal(); toast('已清除切换记录'); }});
       },50);
@@ -1940,6 +2046,7 @@
         <div class="form-grid">
           <div class="row"><label>教务学年</label><select id="quickJwxtXnm">${$('#jwxtXnm')?.innerHTML||''}</select></div>
           <div class="row"><label>教务学期</label><select id="quickJwxtXqm">${$('#jwxtXqm')?.innerHTML||''}</select></div>
+          <div class="row"><label>课程时间表</label><select id="quickJwxtScheduleTemplate">${$('#jwxtScheduleTemplate')?.innerHTML||''}</select><small>请按学校实际 11:45 / 14:00 节次确认；选择会被冻结到本次导入。</small></div>
         </div>
         <div class="inline">
           <button class="btn primary" id="quickCreateImportBtn">${hasAndroidBridge()?'进入教务网页登录':'生成导入码'}</button>
@@ -1952,6 +2059,7 @@
         const quickSemester=$('#quickJwxtXqm');
         if($('#jwxtXnm')) $('#jwxtXnm').value=quickYear?.value||'';
         if($('#jwxtXqm')) $('#jwxtXqm').value=quickSemester?.value||'';
+        if($('#jwxtScheduleTemplate')) $('#jwxtScheduleTemplate').value=$('#quickJwxtScheduleTemplate')?.value||state.scheduleTemplate?.templateId||'legacy-default';
         await createAndroidImportCode();
         if(latestAndroidImportCode && !hasAndroidBridge()){
           $('#modalBody').innerHTML=`<div class="detail" style="font-size:30px;font-weight:900;text-align:center;letter-spacing:3px">${escapeHtml(latestAndroidImportCode)}</div><div class="inline"><button class="btn primary" id="quickCopyImportCodeBtn">复制导入码</button></div>`;
@@ -2166,15 +2274,18 @@
     function openScheduleSettingsModal(){
       const meta=effectiveMeta();
       const st=state.courseSettings||DEFAULT_COURSE_SETTINGS;
+      const selectableTemplates=(state.scheduleTemplates||[]).filter(template=>!template.accountId||template.accountId===state.accountId||template.templateId===state.scheduleTemplate?.templateId);
       const totalWeeksNote=getActiveTermTotalWeeksReliable()?'':`<div class="secondary-note">系统尚未取得可靠的学期总周数，当前值只用于课程预览，不会据此判定学期结束；请向学校确认后保存。</div>`;
       openModal('课表设置', `
         <div class="form-grid">
           <div class="row"><label>一共多少周</label><input id="settingTotalWeeks" type="number" min="1" max="60" value="${escapeHtml(getActiveTermTotalWeeks())}" /></div>
           <div class="row"><label>每周开始日</label><select id="settingWeekStartDay">${DAYS.map((d,i)=>`<option value="${i+1}" ${Number(st.weekStartDay||1)===i+1?'selected':''}>${d}</option>`).join('')}</select></div>
           <div class="row"><label>设置第一教学周周一</label><input id="settingTermStart" type="date" value="${escapeHtml(getActiveTermStart())}" /></div>
+          <div class="row"><label>课程时间表 / 节次体系</label><select id="settingScheduleTemplate">${selectableTemplates.map(template=>`<option value="${escapeHtml(template.templateId)}" ${template.templateId===state.scheduleTemplate?.templateId?'selected':''}>${escapeHtml(template.name||template.templateId)}</option>`).join('')}</select></div>
         </div>
         ${totalWeeksNote}
         <div class="secondary-note">日期尚未公布时可以留空，不影响课程导入和第1周预览；公布后保存周一日期，会立即启用真实周次、星期日期和今天高亮。</div>
+        <div class="secondary-note">学校 A：原始第5节映射为“午间加时”，原始第6节映射为14:00的第5节；学校 B：原始第5节就是14:00的第5节。只有明确确认后才切换，系统不会根据模糊字段静默猜测。</div>
         <div class="style-switch-grid" style="margin-top:14px">
           <div class="style-row"><div>是否需要教室模块<small>关闭后课程格子和编辑界面不突出教室。</small></div><button class="btn ghost" id="settingShowLocation">${st.showLocation?'开启':'关闭'}</button></div>
           <div class="style-row"><div>是否需要教师模块<small>关闭后完整模式里不显示老师。</small></div><button class="btn ghost" id="settingShowTeacher">${st.showTeacher?'开启':'关闭'}</button></div>
@@ -2191,17 +2302,21 @@
         try{
           const totalWeeksValue=Number($('#settingTotalWeeks')?.value||0);
           const termStartValue=($('#settingTermStart')?.value||'').trim();
+          const selectedTemplateId=$('#settingScheduleTemplate')?.value||state.scheduleTemplate?.templateId||'legacy-default';
           if(termStartValue&&!TERM_CALENDAR.validTermStart(termStartValue)) throw new Error('请选择第一教学周的周一；日期未知时可以留空');
           const result=await api('/api/my/active-term/settings',{method:'PUT',body:JSON.stringify({totalWeeks:totalWeeksValue,termStart:termStartValue})});
           state.activeTerm=result.activeTerm||state.activeTerm;
           state.availableTerms=(state.availableTerms||[]).map(term=>term.termKey===state.activeTerm?.termKey?state.activeTerm:term);
+          if(selectedTemplateId!==state.scheduleTemplate?.templateId){
+            await api('/api/my/schedule-template',{method:'PUT',body:JSON.stringify({selectTemplateId:selectedTemplateId})});
+          }
           const layoutChanged=['showLocation','showTeacher','showSectionRange','showClassGroup','customTime']
             .some(key=>Boolean(temp[key])!==Boolean(st[key]));
           saveCourseSettings(
             {...temp,totalWeeks:'',termStart:'',weekStartDay:($('#settingWeekStartDay')?.value||'1')},
             {markCustomized:layoutChanged}
           );
-          clampPreviewWeek(); renderAll(); syncWidgetNow('term-settings'); closeModal(); toast('当前学期设置已保存');
+          await loadMe(); clampPreviewWeek(); renderAll(); syncWidgetNow('term-settings'); closeModal(); toast('当前学期设置已保存');
         }catch(e){toast(e.message||'学期设置保存失败');}
       });
     }
@@ -2209,12 +2324,12 @@
       openModal('课表样式', `
         <div class="style-switch-grid">
           <div class="style-row"><div>课程显示全称<small>关闭后更适合截图，课程名会自动省略。</small></div><button class="btn ghost" id="toggleInfoModeBtn">${state.infoMode==='full'?'关闭':'开启'}</button></div>
-          <div class="style-row"><div>显示第5节<small>有些学校中午没有第5节，隐藏后课表更紧凑。</small></div><button class="btn ghost" id="toggleFifthBtn">${state.hideFifthSlot?'显示':'隐藏'}</button></div>
+          <div class="style-row"><div>特殊午间行<small>新模板会在该周有课时自动展开；旧模板仍可手动隐藏原第5行。</small></div><button class="btn ghost" id="toggleFifthBtn">${String(state.scheduleTemplate?.templateId||'').startsWith('legacy')?(state.hideFifthSlot?'显示旧第5行':'隐藏旧第5行'):'有课自动显示'}</button></div>
           <div class="style-row"><div>底部工具栏<small>隐藏后截图和浏览更干净，可在这里恢复。</small></div><button class="btn ghost" id="toggleToolbarStyleBtn">${state.bottomToolbarHidden?'显示':'隐藏'}</button></div>
         </div>
       `);
       $('#toggleInfoModeBtn') && ($('#toggleInfoModeBtn').onclick=()=>{ setInfoMode(state.infoMode==='full'?'compact':'full'); closeModal(); toast(state.infoMode==='full'?'已显示完整信息':'已切换为简洁信息'); });
-      $('#toggleFifthBtn') && ($('#toggleFifthBtn').onclick=()=>{ setHideFifthSlot(!state.hideFifthSlot); closeModal(); });
+      $('#toggleFifthBtn') && ($('#toggleFifthBtn').onclick=()=>{ if(!String(state.scheduleTemplate?.templateId||'').startsWith('legacy')) return toast('当前模板已按该周是否有课自动显示'); setHideFifthSlot(!state.hideFifthSlot); closeModal(); });
       $('#toggleToolbarStyleBtn') && ($('#toggleToolbarStyleBtn').onclick=()=>{ setBottomToolbarHidden(!state.bottomToolbarHidden); closeModal(); });
     }
     function openThemePanel(){
@@ -2469,7 +2584,7 @@
     $$('.mobile-bottom-tool[data-bottom-action]').forEach(b=>b.onclick=()=>handleFeatureAction(b.dataset.bottomAction));
     $('#loginBtn').onclick=async()=>{ try{ await loginAndLoad($('#loginUsername').value.trim(),$('#loginPassword').value); toast('登录成功'); }catch(e){ toast(e.message); } };
     $('#registerBtn').onclick=async()=>{ try{ const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({name:$('#registerName').value.trim(),username:$('#registerUsername').value.trim(),password:$('#registerPassword').value})}); state.token=r.token; state.switchKey=r.switchKey||r.user?.switchKey||''; localStorage.setItem('courseTableUserToken',state.token); await loadMe({expectedAccountId:r.accountId||r.user?.accountId||''}); toast('注册并登录成功'); }catch(e){ toast(e.message); } };
-    $('#logoutBtn').onclick=async()=>{ rememberCurrentAccount(); state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); resetToLoggedOut(); toast('已在本机退出，已保存账号仍可快速切换'); };
+    $('#logoutBtn').onclick=async()=>{ rememberCurrentAccount(); if(hasLocalBridge()&&state.token){try{await api('/api/auth/logout',{method:'POST'})}catch(_){}} state.token=''; state.switchKey=''; localStorage.removeItem('courseTableUserToken'); localStorage.removeItem('xiaodeCurrentSwitchKey'); resetToLoggedOut(); toast('已在本机退出，已保存账号仍可快速切换'); };
     $('#refreshBtn').onclick=async()=>{ 
   try{ 
     await loadMe(); 
@@ -2495,11 +2610,22 @@ $('#helpBtnAuth').onclick = openHelpModal;
     $('#thisWeekInline') && ($('#thisWeekInline').onclick=focusCurrentTermWeek);
     $('#nextWeekInline') && ($('#nextWeekInline').onclick=()=>{ state.previewWeek=Math.min(totalWeeks(),getSelectedWeek()+1); renderAll(); });
     $$('.mode .btn').forEach(b=>b.onclick=()=>setInfoMode(b.dataset.mode));
-    $('#saveCourseBtn').onclick=async()=>{ try{ const payload={name:$('#courseName').value.trim(),shortName:$('#courseShortName').value.trim(),teacher:$('#courseTeacher').value.trim(),location:$('#courseLocation').value.trim(),classGroup:$('#courseClassGroup').value.trim(),day:Number($('#courseDay').value),slot:Number($('#courseSlot').value),weekText:$('#courseWeekText').value.trim(),oddEven:$('#courseOddEven').value,category:$('#courseCategory').value}; if(state.editingCourse){ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'PUT',body:JSON.stringify(payload)}); } else { await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)}); } await loadMe(); clearCourseForm(); toast('课程已保存到你的课表'); }catch(e){ toast(e.message); } };
+    $('#saveCourseBtn').onclick=async()=>{ try{ const payload={name:$('#courseName').value.trim(),shortName:$('#courseShortName').value.trim(),teacher:$('#courseTeacher').value.trim(),location:$('#courseLocation').value.trim(),classGroup:$('#courseClassGroup').value.trim(),day:Number($('#courseDay').value),...slotRangePayload(Number($('#courseSlot').value),Number($('#courseEndSlot')?.value||$('#courseSlot').value)),weekText:$('#courseWeekText').value.trim(),oddEven:$('#courseOddEven').value,category:$('#courseCategory').value}; if(state.editingCourse){payload.underlyingIds=state.editingCourse.underlyingIds||[];await api(`/api/my/courses/${state.editingCourse.id}`,{method:'PUT',body:JSON.stringify(payload)}); } else { await api('/api/my/courses',{method:'POST',body:JSON.stringify(payload)}); } await loadMe(); clearCourseForm(); toast('课程已保存到你的课表'); }catch(e){ toast(e.message); } };
     $('#resetCourseBtn').onclick=clearCourseForm;
     $('#deleteCourseBtn').onclick=async()=>{ if(!state.editingCourse) return; if(!confirm(`删除 ${state.editingCourse.name}？`)) return; try{ await api(`/api/my/courses/${state.editingCourse.id}`,{method:'DELETE'}); await loadMe(); clearCourseForm(); toast('已从你的课表删除'); }catch(e){ toast(e.message); } };
     $('#clearAllCoursesBtn').onclick=async()=>{ if(!confirm(`确定清空“${getActiveTerm()?.selectedTermLabel||'当前学期'}”的所有课程吗？其他学期不会受影响。`)) return; try{ const r=await api('/api/my/courses',{method:'DELETE'}); await loadMe(); clearCourseForm(); toast(`已清空当前学期 ${r.count||0} 门课程`); }catch(e){ toast(e.message); } };
-    async function doImport(replace){ try{ let rows=[]; const text=$('#importText').value.trim(); if(text) rows=parseCsv(text); else if(window._importRows) rows=window._importRows; const courses=normalizeImported(rows); if(!courses.length) return toast('没有可导入的课程'); await api('/api/my/import',{method:'POST',body:JSON.stringify({courses,replace})}); await loadMe(); toast(`已${replace?'覆盖':'追加'}导入 ${courses.length} 条到你的课表，并已刷新显示`); }catch(e){ toast(e.message); } }
+    async function confirmDetectedImportTemplate(rows){
+      if(!SCHEDULE_TEMPLATE_API?.detectScheduleTemplateFromTimes) return;
+      const detection=SCHEDULE_TEMPLATE_API.detectScheduleTemplateFromTimes(rows,state.scheduleTemplates||[]);
+      if(!detection?.templateId||detection.templateId===state.scheduleTemplate?.templateId) return;
+      const target=(state.scheduleTemplates||[]).find(template=>template.templateId===detection.templateId);
+      if(!target) return;
+      const accepted=confirm(`根据 ${detection.matched} 条可靠上课时间，检测到“${target.name||target.templateId}”。是否用它解释本次原始节次？\n\n选择“取消”会保留当前模板，不会静默猜测。`);
+      if(!accepted) return;
+      await api('/api/my/schedule-template',{method:'PUT',body:JSON.stringify({selectTemplateId:target.templateId})});
+      await loadMe();
+    }
+    async function doImport(replace){ try{ let rows=[]; const text=$('#importText').value.trim(); if(text) rows=parseCsv(text); else if(window._importRows) rows=window._importRows; await confirmDetectedImportTemplate(rows); const courses=normalizeImported(rows); if(!courses.length) return toast('没有可导入的课程'); await api('/api/my/import',{method:'POST',body:JSON.stringify({courses,replace})}); await loadMe(); toast(`已${replace?'覆盖':'追加'}导入 ${courses.length} 条到你的课表，并已刷新显示`); }catch(e){ toast(e.message); } }
     $('#replaceImportBtn').onclick=()=>doImport(true); $('#appendImportBtn').onclick=()=>doImport(false);
 
     let jwxtReplaceMode = true;
@@ -2530,12 +2656,19 @@ $('#helpBtnAuth').onclick = openHelpModal;
     function syncAndroidImportUi(){
       const input=$('#appServerUrl');
       if(input) {
-        input.value=location.origin;
+        input.value=nativeServerUrl();
         input.onclick=()=>selectInputText(input);
         input.onfocus=()=>selectInputText(input);
       }
       const modeBtn=$('#jwxtAppendModeBtn');
       if(modeBtn) modeBtn.textContent=jwxtReplaceMode?'当前：覆盖导入':'当前：追加导入';
+      const templateSelect=$('#jwxtScheduleTemplate');
+      if(templateSelect){
+        const selected=templateSelect.value||state.scheduleTemplate?.templateId||'legacy-default';
+        const templates=(state.scheduleTemplates||[]).length?state.scheduleTemplates:[state.scheduleTemplate].filter(Boolean);
+        templateSelect.innerHTML=templates.map(template=>`<option value="${escapeHtml(template.templateId)}">${escapeHtml(template.name||template.templateId)}</option>`).join('');
+        templateSelect.value=templates.some(template=>template.templateId===selected)?selected:(state.scheduleTemplate?.templateId||templates[0]?.templateId||'legacy-default');
+      }
       refreshAndroidBridgeUi();
     }
     function selectInputText(input){
@@ -2581,7 +2714,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
       }
     }
     async function copyServerUrl(){
-      const value=location.origin;
+      const value=nativeServerUrl();
       await copyText(value, '服务器地址已复制，可以粘贴到 Android 导入助手', '#appServerUrl');
     }
     function populateJwxtYearOptions(){
@@ -2611,8 +2744,10 @@ $('#helpBtnAuth').onclick = openHelpModal;
     async function createAndroidImportCode(){
       try{
         const {xnm,xqm,selectedTermLabel}=selectedJwxtTerm();
-        const r=await api('/api/my/import-code',{method:'POST',body:JSON.stringify({replace:jwxtReplaceMode,xnm,xqm,selectedTermLabel})});
+        const scheduleTemplateId=$('#jwxtScheduleTemplate')?.value||state.scheduleTemplate?.templateId||'legacy-default';
+        const r=await api('/api/my/import-code',{method:'POST',body:JSON.stringify({replace:jwxtReplaceMode,xnm,xqm,selectedTermLabel,scheduleTemplateId})});
         if(r.xnm!==xnm || r.xqm!==xqm || r.selectedTermLabel!==selectedTermLabel) throw new Error('服务器返回的导入学期与当前选择不一致');
+        if(r.scheduleTemplateId!==scheduleTemplateId) throw new Error('服务器返回的课程时间表与当前选择不一致');
         latestAndroidImportCode=r.code;
         $('#androidImportCodeBox')?.classList.remove('hidden');
         const codeInput=$('#androidImportCode');
@@ -2638,9 +2773,10 @@ $('#helpBtnAuth').onclick = openHelpModal;
           selectedTermLabel:r.selectedTermLabel,
           xnm:r.xnm,
           xqm:r.xqm,
+          scheduleTemplateId:r.scheduleTemplateId,
           replace:!!r.replace,
           expiresAt:r.expiresAt || '',
-          serverUrl:location.origin
+          serverUrl:nativeServerUrl()
         };
         if(startAndroidNativeImport(payload)){
           const box=$('#androidImportCodeBox');
@@ -2671,7 +2807,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
         </div>
         <div class="detail" style="margin-bottom:12px">
           <div style="font-weight:900;font-size:18px;margin-bottom:6px">当前配置</div>
-          <div>服务器地址：<b>${escapeHtml(location.origin)}</b></div>
+          <div>服务器地址：<b>${escapeHtml(nativeServerUrl())}</b></div>
           <div>本次请求：<b>${escapeHtml(selectedTermLabel)}</b>（xnm=${escapeHtml(xnm)}，xqm=${escapeHtml(xqm)}）</div>
           <div>导入模式：<b>${jwxtReplaceMode?'覆盖原课表':'追加到原课表'}</b></div>
         </div>
@@ -2691,7 +2827,7 @@ $('#helpBtnAuth').onclick = openHelpModal;
     $('#jwxtAppendModeBtn') && ($('#jwxtAppendModeBtn').onclick=()=>{ jwxtReplaceMode=!jwxtReplaceMode; syncAndroidImportUi(); toast(jwxtReplaceMode?'导入模式：覆盖原课表':'导入模式：追加到原课表'); });
     syncAndroidImportUi();
 
-    $('#fileInput').onchange=async(e)=>{ try{ const file=e.target.files[0]; if(!file) return; const lower=file.name.toLowerCase(); if(lower.endsWith('.csv')){ window._importRows=parseCsv(await file.text()); const n=normalizeImported(window._importRows).length; toast(`CSV 已读取，匹配到 ${n} 条课程`); return; } if(lower.endsWith('.pdf')){ window._importRows=await parsePdfFile(file); toast(`PDF 已读取，匹配到 ${window._importRows.length} 条课程`); return; } const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:'array'}); let bestRows=[]; let bestCount=0; let bestName=''; for(const name of wb.SheetNames){ const sheet=wb.Sheets[name]; const matrix = buildSheetMatrix(sheet); const gridCandidate = detectGridSheet(matrix) ? parseGridSheet(matrix) : []; const recordCandidate = XLSX.utils.sheet_to_json(sheet,{defval:''}); const gridCount = normalizeImported(gridCandidate).length; const recordCount = normalizeImported(recordCandidate).length; const candidate = gridCount >= recordCount ? gridCandidate : recordCandidate; const count = Math.max(gridCount, recordCount); if(count>bestCount){ bestCount=count; bestRows=candidate; bestName=name; } } window._importRows=bestRows; if(!bestCount) throw new Error('没有读取到有效内容：这份 Excel 不是普通导入表。我已按网格课表尝试解析，但还没匹配到课程。'); toast(`Excel 已读取（${bestName}），匹配到 ${bestCount} 条课程，可点击覆盖或追加导入`); }catch(err){ console.error(err); toast(err.message||'文件读取失败'); } };
+    $('#fileInput').onchange=async(e)=>{ try{ const file=e.target.files[0]; if(!file) return; const lower=file.name.toLowerCase(); if(lower.endsWith('.csv')){ window._importRows=parseCsv(await file.text()); const n=normalizeImported(window._importRows).length; toast(`CSV 已读取，匹配到 ${n} 条课程`); return; } if(lower.endsWith('.pdf')){ window._importRows=await parsePdfFile(file); toast(`PDF 已读取，匹配到 ${window._importRows.length} 条课程`); return; } await ensureXlsx(); const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:'array'}); let bestRows=[]; let bestCount=0; let bestName=''; for(const name of wb.SheetNames){ const sheet=wb.Sheets[name]; const matrix = buildSheetMatrix(sheet); const gridCandidate = detectGridSheet(matrix) ? parseGridSheet(matrix) : []; const recordCandidate = XLSX.utils.sheet_to_json(sheet,{defval:''}); const gridCount = normalizeImported(gridCandidate).length; const recordCount = normalizeImported(recordCandidate).length; const candidate = gridCount >= recordCount ? gridCandidate : recordCandidate; const count = Math.max(gridCount, recordCount); if(count>bestCount){ bestCount=count; bestRows=candidate; bestName=name; } } window._importRows=bestRows; if(!bestCount) throw new Error('没有读取到有效内容：这份 Excel 不是普通导入表。我已按网格课表尝试解析，但还没匹配到课程。'); toast(`Excel 已读取（${bestName}），匹配到 ${bestCount} 条课程，可点击覆盖或追加导入`); }catch(err){ console.error(err); toast(err.message||'文件读取失败'); } };
     $('#saveProfileBtn') && ($('#saveProfileBtn').onclick=async()=>{ try{ const r=await api('/api/my/profile',{method:'PUT',body:JSON.stringify({name:$('#profileName').value.trim(), username:state.user?.username||''})}); state.user=r.user; renderAll(); toast('姓名已保存'); }catch(e){ toast(e.message); } });
     $('#changePasswordBtn') && ($('#changePasswordBtn').onclick=async()=>{ try{ await api('/api/auth/password',{method:'PUT',body:JSON.stringify({oldPassword:$('#oldPassword').value,newPassword:$('#newPassword').value})}); $('#oldPassword').value=''; $('#newPassword').value=''; toast('密码已修改'); }catch(e){ toast(e.message); } });
     $('#closeModal').onclick=closeModal; $('#backdrop').onclick=closeModal;
@@ -2710,13 +2846,17 @@ $('#helpBtnAuth').onclick = openHelpModal;
       const current = state.user ? nowCourse(now) : null;
       const next = state.user ? nextCourse(now) : null;
       return {
-        version: 4,
+        version: 5,
         accountId: state.accountId,
         activeTermKey: getActiveTerm()?.termKey||'',
         reason: 'web-sync',
         syncedAt: new Date().toISOString(),
         scheduleName: state.user ? (state.user.name || state.user.username || '我的课表') : '我的课表',
         user: state.user ? { name: state.user.name || '', username: state.user.username || '' } : null,
+        activeTerm: state.activeTerm,
+        availableTerms: state.availableTerms,
+        preferences: currentPreferenceSnapshot(),
+        scheduleTemplate: state.scheduleTemplate,
         meta: state.meta ? {
           campusName: state.meta.campusName || '',
           termStart: getActiveTermStart(),
@@ -2743,6 +2883,14 @@ $('#helpBtnAuth').onclick = openHelpModal;
           slot: courseStartSlot(c),
           startSlot: courseStartSlot(c),
           endSlot: courseEndSlot(c),
+          sourceStartSlot: Number(c.sourceStartSlot??courseStartSlot(c)),
+          sourceEndSlot: Number(c.sourceEndSlot??courseEndSlot(c)),
+          startSlotKey: c.startSlotKey||getSlot(courseStartSlot(c)).slotKey||'',
+          endSlotKey: c.endSlotKey||getSlot(courseEndSlot(c)).slotKey||'',
+          scheduleTemplateId: c.scheduleTemplateId||state.scheduleTemplate?.templateId||'legacy-default',
+          underlyingIds: Array.isArray(c.underlyingIds)?c.underlyingIds:[],
+          sourceIds: Array.isArray(c.sourceIds)?c.sourceIds:[],
+          scheduleVariants: Array.isArray(c.scheduleVariants)?c.scheduleVariants:[],
           weeks: Array.isArray(c.weeks) ? c.weeks : [],
           weekText: c.weekText || '',
           oddEven: c.oddEven || 'all',
@@ -2809,11 +2957,40 @@ $('#helpBtnAuth').onclick = openHelpModal;
     document.addEventListener('visibilitychange', () => {
       if(!document.hidden) autoRefreshAfterAndroidImport('visibilitychange');
     });
+    function acceptNativeSyncStatus(value){
+      try{
+        const previous=state.syncStatus||{};
+        const next=typeof value==='string'?JSON.parse(value):value||previous;
+        state.syncStatus=next;renderSyncStatus();
+        if(String(next?.status||'').toUpperCase()==='SYNCED' && Number(next?.lastPullAt||0)>Number(previous?.lastPullAt||0)){
+          autoRefreshAfterAndroidImport('native-sync-complete');
+        }
+      }
+      catch(error){console.warn('同步状态解析失败',error)}
+    }
+    window.__xiaodeSyncStatus=acceptNativeSyncStatus;
+    window.addEventListener('xiaode-sync-status',event=>acceptNativeSyncStatus(event.detail));
 
     applyTheme(state.theme);
     updateBottomToolbar(false);
     updateToolbarToggleTile();
-    (async function init(){ try{ await bootPublic(); if(state.token){ try{ await loadMe(); }catch{ state.token=''; localStorage.removeItem('courseTableUserToken'); resetToLoggedOut(); } } else { renderAuthState(false); } setInterval(()=>state.meta&&renderHeader(),1000); }catch(e){ console.error(e); toast('后端未启动，请先运行 backend 服务'); } })();
+    (async function init(){
+      try{
+        const moduleUrl=hasLocalBridge()?'./schedule-template.js':'/shared/schedule-template.js';
+        try{SCHEDULE_TEMPLATE_API=await import(moduleUrl)}catch(error){console.warn('课节模板模块加载失败，使用旧版兼容布局',error)}
+        const bootstrap=await bootPublic();
+        if(state.token||bootstrap?.localSessionAvailable){
+          if(!state.token&&hasLocalBridge()) state.token='native-local-session';
+          try{await loadMe();}
+          catch(error){
+            console.warn('账号数据加载失败',error);
+            if(Number(error?.status)===401&&!hasLocalBridge()){state.token='';localStorage.removeItem('courseTableUserToken');resetToLoggedOut()}
+            else {state.syncStatus={...(state.syncStatus||{}),status:'OFFLINE',lastError:error?.message||''};renderAll()}
+          }
+        }else renderAuthState(false);
+        setInterval(()=>state.meta&&renderHeader(),1000);
+      }catch(e){console.error(e);state.syncStatus={status:'OFFLINE',pendingCount:0,lastError:e?.message||''};renderSyncStatus();toast(hasLocalBridge()?'本地课表初始化失败，请重启 App':'后端未启动，请先运行 backend 服务')}
+    })();
   </script>
 </body>
 </html>

@@ -173,7 +173,7 @@ test('portrait Web timetable renders one spanning DOM and persists the section-r
     locationCount: 1,
     sectionCount: 0,
     timeCells: 12,
-    firstTime: '108:00-08:45',
+    firstTime: '第1节08:00-08:45',
     tableSize: 'screenshot'
   });
 

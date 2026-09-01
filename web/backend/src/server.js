@@ -12,6 +12,14 @@ import {
   parseWeeksDetailed
 } from './import-pipeline.js';
 import { createImportDiagnosticsStore } from './import-diagnostics-store.js';
+import {
+  createLegacyDefaultTemplate,
+  createSchoolATemplate,
+  createSchoolBTemplate,
+  normalizeCourseSlotFields,
+  normalizeScheduleTemplate,
+  projectTemplateToSlots
+} from '../../shared/schedule-template.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,7 +30,7 @@ const DATA_FILE = process.env.NODE_ENV === 'test' && process.env.XIAODE_DATA_FIL
 const PUBLIC_DIR = path.join(ROOT, 'frontend', 'public');
 const PORT = process.env.PORT || 3001;
 const APP_VERSION = 'v41-dev';
-const DB_SCHEMA_VERSION = 7;
+const DB_SCHEMA_VERSION = 8;
 const DEFAULT_TOTAL_WEEKS = 20;
 const RELIABLE_TOTAL_WEEKS_SOURCES = new Set(['manual', 'legacy-account-setting']);
 const STORAGE_DRIVER = String(process.env.XIAODE_STORAGE || process.env.DB_DRIVER || 'json').toLowerCase();
@@ -305,6 +313,8 @@ function migrateDbToV38(input = {}) {
   if (!Array.isArray(db.importCodes)) db.importCodes = [];
   if (!Array.isArray(db.backups)) db.backups = [];
   if (!Array.isArray(db.terms)) db.terms = [];
+  if (!Array.isArray(db.scheduleTemplates)) db.scheduleTemplates = [];
+  if (!Array.isArray(db.processedMutations)) db.processedMutations = [];
 
   const userIds = new Set();
   for (const user of db.users) {
@@ -405,7 +415,8 @@ function migrateDbToV38(input = {}) {
       userId: user.id,
       preferences,
       slots: accountSlots,
-      updatedAt: setting.updatedAt || now
+      updatedAt: setting.updatedAt || now,
+      revision: Math.max(1, Number(setting.revision || 1))
     });
     reminderMap.set(accountId, {
       id: reminder.id || `rem_${accountId}`,
@@ -497,7 +508,9 @@ function migrateDbToV38(input = {}) {
       totalWeeks,
       totalWeeksSource,
       createdAt: rawTerm.createdAt || now,
-      updatedAt: rawTerm.updatedAt || now
+      updatedAt: rawTerm.updatedAt || now,
+      revision: Math.max(1, Number(rawTerm.revision || 1)),
+      scheduleTemplateId: String(rawTerm.scheduleTemplateId || '').trim()
     });
   }
 
@@ -523,7 +536,9 @@ function migrateDbToV38(input = {}) {
       totalWeeks: maxCourseWeek || normalizeTotalWeeks(db.meta.totalWeeks),
       totalWeeksSource: maxCourseWeek ? 'course-max-week' : 'legacy-default',
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      revision: 1,
+      scheduleTemplateId: ''
     });
   }
 
@@ -543,7 +558,9 @@ function migrateDbToV38(input = {}) {
         totalWeeks: normalizeTotalWeeks(db.meta.totalWeeks),
         totalWeeksSource: 'legacy-default',
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        revision: 1,
+        scheduleTemplateId: ''
       });
     }
     const refreshedTerms = [...termMap.values()].filter((term) => term.accountId === account.id);
@@ -555,6 +572,7 @@ function migrateDbToV38(input = {}) {
     const importedTerm = refreshedTerms.find((term) => term.termKey === importedKey);
     const activeTerm = validExisting || importedTerm || refreshedTerms.find((term) => term.xnm && term.xqm) || refreshedTerms[0];
     account.activeTermKey = activeTerm.termKey;
+    account.revision = Math.max(1, Number(account.revision || 1));
 
     const oldCourseSettings = settingMap.get(account.id)?.preferences?.courseSettings || {};
     if (activeTerm && oldCourseSettings) {
@@ -566,6 +584,72 @@ function migrateDbToV38(input = {}) {
     }
   }
   db.terms = [...termMap.values()];
+
+  // v42：新增可扩展课节模板。旧账号使用从原 slots 原样投影的 legacy 模板，
+  // logicalOrder、显示编号和时间均保持不变，升级不会把 6-7 节重排成 5-6 节。
+  const templateMap = new Map();
+  for (const rawTemplate of db.scheduleTemplates) {
+    if (!rawTemplate || typeof rawTemplate !== 'object') continue;
+    const normalized = normalizeScheduleTemplate(rawTemplate, db.slots);
+    if (normalized.templateId && normalized.periods.length) templateMap.set(normalized.templateId, normalized);
+  }
+  const legacyDefault = createLegacyDefaultTemplate(db.slots, {
+    templateId: 'legacy-default',
+    createdAt: templateMap.get('legacy-default')?.createdAt || now,
+    updatedAt: templateMap.get('legacy-default')?.updatedAt || now,
+    revision: templateMap.get('legacy-default')?.revision || 1
+  });
+  templateMap.set(legacyDefault.templateId, legacyDefault);
+  for (const builtin of [createSchoolATemplate(), createSchoolBTemplate()]) {
+    const existing = templateMap.get(builtin.templateId);
+    templateMap.set(builtin.templateId, normalizeScheduleTemplate(existing || { ...builtin, createdAt: now, updatedAt: now }));
+  }
+  for (const account of db.accounts) {
+    const setting = settingMap.get(account.id);
+    let templateId = 'legacy-default';
+    if (Array.isArray(setting?.slots) && setting.slots.length) {
+      templateId = `legacy-account-${crypto.createHash('sha1').update(account.id).digest('hex').slice(0, 16)}`;
+      const existing = templateMap.get(templateId);
+      templateMap.set(templateId, createLegacyDefaultTemplate(setting.slots, {
+        templateId,
+        accountId: account.id,
+        name: '账号原有课节时间表',
+        createdAt: existing?.createdAt || now,
+        updatedAt: existing?.updatedAt || setting.updatedAt || now,
+        revision: existing?.revision || setting.revision || 1
+      }));
+    }
+    for (const term of db.terms.filter((item) => item.accountId === account.id)) {
+      if (!templateMap.has(term.scheduleTemplateId)) term.scheduleTemplateId = templateId;
+    }
+  }
+  db.scheduleTemplates = [...templateMap.values()];
+
+  const templatesById = new Map(db.scheduleTemplates.map((template) => [template.templateId, template]));
+  const termsByKey = new Map(db.terms.map((term) => [term.termKey, term]));
+  db.courses = db.courses.map((course) => {
+    if (!course || !course.accountId || !course.termKey) return course;
+    const term = termsByKey.get(course.termKey);
+    const template = templatesById.get(course.scheduleTemplateId || term?.scheduleTemplateId) || legacyDefault;
+    const slots = normalizeCourseSlotFields({
+      ...course,
+      sourceStartSlot: course.sourceStartSlot ?? course.startSlot ?? course.slot,
+      sourceEndSlot: course.sourceEndSlot ?? course.endSlot ?? course.startSlot ?? course.slot
+    }, template);
+    return {
+      ...course,
+      ...(slots || {}),
+      scheduleTemplateId: template.templateId,
+      clientLocalId: String(course.clientLocalId || '').slice(0, 120),
+      createdAt: course.createdAt || course.updatedAt || now,
+      updatedAt: course.updatedAt || course.createdAt || now,
+      revision: Math.max(1, Number(course.revision || 1))
+    };
+  });
+
+  db.processedMutations = db.processedMutations
+    .filter((item) => item && item.operationId && item.accountId && item.payloadHash)
+    .slice(-5000);
 
   db.sessions = db.sessions
     .filter((session) => session && typeof session === 'object' && session.token)
@@ -596,11 +680,32 @@ function activeTermForAccount(db, accountId) {
   return terms.find((term) => term.termKey === account?.activeTermKey) || terms[0] || null;
 }
 
+function scheduleTemplatesForAccount(db, accountId) {
+  const terms = new Set(termsForAccount(db, accountId).map((term) => term.scheduleTemplateId).filter(Boolean));
+  return (db.scheduleTemplates || []).filter((template) =>
+    !template.accountId || template.accountId === accountId || terms.has(template.templateId)
+  );
+}
+
+function scheduleTemplateById(db, templateId, accountId = '') {
+  return (db.scheduleTemplates || []).find((template) =>
+    template.templateId === templateId && (!template.accountId || !accountId || template.accountId === accountId)
+  ) || null;
+}
+
+function scheduleTemplateForTerm(db, term) {
+  return scheduleTemplateById(db, term?.scheduleTemplateId || 'legacy-default', term?.accountId || '')
+    || scheduleTemplateById(db, 'legacy-default')
+    || createLegacyDefaultTemplate(db.slots || DEFAULT_12_SLOTS);
+}
+
 function coursesForAccount(db, accountId, termKey = activeTermForAccount(db, accountId)?.termKey || '') {
   if (!termKey) return [];
   const scoped = allCoursesForAccount(db, accountId).filter((course) => course.termKey === termKey);
+  const term = termsForAccount(db, accountId).find((item) => item.termKey === termKey);
+  const scheduleTemplate = scheduleTemplateForTerm(db, term);
   // 输出层忽略存储来源合并逻辑课程；底层仍保留 source 边界，保证 jwxt replace 不会吞掉手工课程。
-  return buildCourseDisplayRecords(mergeCourseRecords(scoped).courses);
+  return buildCourseDisplayRecords(mergeCourseRecords(scoped, { scheduleTemplate }).courses);
 }
 
 function retainedLogicalCourse(db, target) {
@@ -615,8 +720,19 @@ function retainedLogicalCourse(db, target) {
     const courseStart = Number(course.startSlot ?? course.slot);
     const courseEnd = Number(course.endSlot ?? courseStart);
     if (courseStart > targetStart || courseEnd < targetEnd) return false;
-    const projectedRange = { ...course, slot: targetStart, startSlot: targetStart, endSlot: targetEnd };
-    return mergeCourseRecords([projectedRange, target]).courses.length === 1;
+    const projectedRange = {
+      ...course,
+      slot: targetStart,
+      startSlot: targetStart,
+      endSlot: targetEnd,
+      sourceStartSlot: target.sourceStartSlot ?? targetStart,
+      sourceEndSlot: target.sourceEndSlot ?? targetEnd,
+      startSlotKey: target.startSlotKey || `P${targetStart}`,
+      endSlotKey: target.endSlotKey || `P${targetEnd}`,
+      scheduleTemplateId: target.scheduleTemplateId || course.scheduleTemplateId
+    };
+    const term = termsForAccount(db, target.accountId).find((item) => item.termKey === target.termKey);
+    return mergeCourseRecords([projectedRange, target], { scheduleTemplate: scheduleTemplateForTerm(db, term) }).courses.length === 1;
   }) || null;
 }
 
@@ -635,18 +751,24 @@ function publicTerm(db, term) {
     totalWeeks: normalizeTotalWeeks(term.totalWeeks),
     totalWeeksSource: term.totalWeeksSource || 'saved',
     totalWeeksReliable: calendar.totalWeeksReliable,
+    scheduleTemplateId: term.scheduleTemplateId || 'legacy-default',
+    updatedAt: term.updatedAt || '',
+    revision: Math.max(1, Number(term.revision || 1)),
     courseCount: coursesForAccount(db, term.accountId, term.termKey).length
   };
 }
 
 function activeTermPayload(db, accountId) {
   const activeTerm = activeTermForAccount(db, accountId);
+  const scheduleTemplate = scheduleTemplateForTerm(db, activeTerm);
   return {
     activeTerm: publicTerm(db, activeTerm),
     availableTerms: termsForAccount(db, accountId)
       .map((term) => publicTerm(db, term))
       .sort((a, b) => String(b.xnm || '').localeCompare(String(a.xnm || '')) || String(b.xqm || '').localeCompare(String(a.xqm || ''))),
-    courses: coursesForAccount(db, accountId, activeTerm?.termKey)
+    courses: coursesForAccount(db, accountId, activeTerm?.termKey),
+    scheduleTemplate,
+    scheduleTemplates: scheduleTemplatesForAccount(db, accountId)
   };
 }
 
@@ -667,15 +789,24 @@ function firstNonEmptyCourseText(...values) {
 }
 
 
-function normalizeCourse(input, userId, accountId, term = null) {
+function normalizeCourse(input, userId, accountId, term = null, scheduleTemplate = null) {
   const weekText = String(input.weekText || input.weekPattern || '').trim();
   const parsed = parseWeeksDetailed(input.weeks, weekText, { maxWeeks: 60 });
   const scopedTerm = term || normalizeLegacyCourseTerm(input, accountId);
+  const template = scheduleTemplate || createLegacyDefaultTemplate(DEFAULT_12_SLOTS);
+  const mappedSlots = normalizeCourseSlotFields(input, template);
   const requestedSlot = Number(input.slot ?? input.startSlot ?? input.startSection ?? 0);
   const requestedStart = Number(input.startSlot ?? input.startSection ?? requestedSlot);
   const requestedEnd = Number(input.endSlot ?? input.endSection ?? requestedStart);
-  const startSlot = Number.isInteger(requestedStart) && requestedStart >= 1 && requestedStart <= 12 ? requestedStart : 0;
-  const endSlot = Number.isInteger(requestedEnd) && requestedEnd >= startSlot && requestedEnd <= 12 ? requestedEnd : startSlot;
+  const fallbackStart = Number.isInteger(requestedStart) && requestedStart >= 1 && requestedStart <= 60 ? requestedStart : 0;
+  const fallbackEnd = Number.isInteger(requestedEnd) && requestedEnd >= fallbackStart && requestedEnd <= 60 ? requestedEnd : fallbackStart;
+  const startSlot = mappedSlots?.startSlot ?? fallbackStart;
+  const endSlot = mappedSlots?.endSlot ?? fallbackEnd;
+  const now = new Date().toISOString();
+  const location = firstNonEmptyCourseText(input.location, input.room);
+  const cleanIds = (value) => Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, 200)
+    : [];
   return {
     id: input.id || uid('c'),
     userId,
@@ -685,7 +816,8 @@ function normalizeCourse(input, userId, accountId, term = null) {
     name: firstNonEmptyCourseText(input.name, input.courseName),
     shortName: String(input.shortName || '').trim(),
     teacher: firstNonEmptyCourseText(input.teacher),
-    location: firstNonEmptyCourseText(input.location, input.room),
+    location,
+    room: firstNonEmptyCourseText(input.room, location),
     classGroup: String(input.classGroup || '').trim(),
     weekText: parsed.normalizedWeekText || weekText,
     weeks: parsed.baseWeeks,
@@ -696,12 +828,24 @@ function normalizeCourse(input, userId, accountId, term = null) {
     sourceIndex: Number.isInteger(Number(input.sourceIndex)) ? Number(input.sourceIndex) : null,
     startSlot,
     endSlot,
+    sourceStartSlot: mappedSlots?.sourceStartSlot ?? Number(input.sourceStartSlot ?? startSlot),
+    sourceEndSlot: mappedSlots?.sourceEndSlot ?? Number(input.sourceEndSlot ?? endSlot),
+    startSlotKey: mappedSlots?.startSlotKey || String(input.startSlotKey || `P${startSlot}`).slice(0, 80),
+    endSlotKey: mappedSlots?.endSlotKey || String(input.endSlotKey || `P${endSlot}`).slice(0, 80),
+    scheduleTemplateId: mappedSlots?.scheduleTemplateId || String(input.scheduleTemplateId || term?.scheduleTemplateId || 'legacy-default').slice(0, 120),
     termKey: String(scopedTerm.termKey || input.termKey || legacyTermKey(accountId)).slice(0, 160),
     xnm: String(scopedTerm.xnm || input.xnm || '').slice(0, 20),
     xqm: String(scopedTerm.xqm || input.xqm || '').slice(0, 20),
     selectedTermLabel: String(scopedTerm.selectedTermLabel || input.selectedTermLabel || '历史课程').slice(0, 120),
     isAdjusted: Boolean(input.isAdjusted),
-    importTraceId: String(input.importTraceId || '').slice(0, 80)
+    importTraceId: String(input.importTraceId || '').slice(0, 80),
+    clientLocalId: String(input.clientLocalId || input.localId || '').slice(0, 120),
+    underlyingIds: cleanIds(input.underlyingIds),
+    sourceIds: cleanIds(input.sourceIds),
+    scheduleVariants: Array.isArray(input.scheduleVariants) ? input.scheduleVariants.slice(0, 200) : [],
+    createdAt: String(input.createdAt || input.updatedAt || now),
+    updatedAt: String(input.updatedAt || input.createdAt || now),
+    revision: Math.max(1, Number(input.revision || 1))
   };
 }
 
@@ -960,9 +1104,11 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/public/bootstrap', (req, res) => {
   const db = readDb();
+  const scheduleTemplate = scheduleTemplateById(db, 'legacy-default') || createLegacyDefaultTemplate(db.slots);
   res.json({
     meta: db.meta,
-    slots: db.slots,
+    slots: projectTemplateToSlots(scheduleTemplate),
+    scheduleTemplate,
     currentUser: null,
     courses: []
   });
@@ -1070,9 +1216,9 @@ app.get('/api/auth/me', requireLogin, (req, res) => {
   const switchKey = ensureUserSwitchKey(user);
   const setting = settingForAccount(db, user.id, req.auth.accountId);
   const preferences = sanitizePreferences(setting?.preferences || user.preferences || {});
-  const slots = Array.isArray(setting?.slots) ? normalizeSlotsInput(setting.slots, db.slots) : db.slots;
   const termState = activeTermPayload(db, req.auth.accountId);
   const activeTerm = termState.activeTerm;
+  const slots = projectTemplateToSlots(termState.scheduleTemplate);
   if (user && db.users.some((u) => u.id === user.id)) writeDb(db);
   res.json({
     ok: true,
@@ -1085,6 +1231,8 @@ app.get('/api/auth/me', requireLogin, (req, res) => {
     termStart: activeTerm?.termStart || '',
     totalWeeks: activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS,
     courses: termState.courses,
+    scheduleTemplate: termState.scheduleTemplate,
+    scheduleTemplates: termState.scheduleTemplates,
     preferences
   });
 });
@@ -1098,6 +1246,7 @@ app.put('/api/my/active-term', requireLogin, (req, res) => {
   if (!account || !term) return res.status(404).json({ ok: false, message: '学期不存在或不属于当前账号' });
   account.activeTermKey = term.termKey;
   account.updatedAt = new Date().toISOString();
+  account.revision = Math.max(1, Number(account.revision || 1)) + 1;
   writeDb(db);
   const payload = activeTermPayload(db, req.auth.accountId);
   res.json({ ok: true, accountId: req.auth.accountId, ...payload });
@@ -1118,6 +1267,7 @@ app.put('/api/my/active-term/settings', requireLogin, (req, res) => {
   term.totalWeeksSource = 'manual';
   term.termStart = normalizeDateText(termStart);
   term.updatedAt = new Date().toISOString();
+  term.revision = Math.max(1, Number(term.revision || 1)) + 1;
   writeDb(db);
   res.json({ ok: true, accountId: req.auth.accountId, activeTerm: publicTerm(db, term) });
 });
@@ -1149,6 +1299,7 @@ app.put('/api/my/preferences', requireLogin, (req, res) => {
   const preferences = sanitizePreferences(req.body?.preferences || req.body || {});
   setting.preferences = preferences;
   setting.updatedAt = new Date().toISOString();
+  setting.revision = Math.max(1, Number(setting.revision || 1)) + 1;
   reminder.settings = preferences.reminderSettings;
   reminder.updatedAt = setting.updatedAt;
   if (accountIdForUser(user) === req.auth.accountId) user.preferences = preferences;
@@ -1181,9 +1332,23 @@ app.put('/api/my/slots', requireLogin, (req, res) => {
   if (!setting) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
   setting.slots = normalized;
   setting.updatedAt = new Date().toISOString();
+  setting.revision = Math.max(1, Number(setting.revision || 1)) + 1;
+  const templateId = `legacy-account-${crypto.createHash('sha1').update(req.auth.accountId).digest('hex').slice(0, 16)}`;
+  const previousTemplate = scheduleTemplateById(db, templateId, req.auth.accountId);
+  const scheduleTemplate = createLegacyDefaultTemplate(normalized, {
+    templateId,
+    accountId: req.auth.accountId,
+    name: '账号自定义课节时间表',
+    createdAt: previousTemplate?.createdAt || setting.updatedAt,
+    updatedAt: setting.updatedAt,
+    revision: Math.max(1, Number(previousTemplate?.revision || 1)) + 1
+  });
+  db.scheduleTemplates = (db.scheduleTemplates || []).filter((item) => item.templateId !== templateId);
+  db.scheduleTemplates.push(scheduleTemplate);
+  for (const term of termsForAccount(db, req.auth.accountId)) term.scheduleTemplateId = templateId;
   if (accountIdForUser(user) === req.auth.accountId) user.slots = normalized;
   writeDb(db);
-  res.json({ ok: true, accountId: req.auth.accountId, slots: normalized });
+  res.json({ ok: true, accountId: req.auth.accountId, slots: projectTemplateToSlots(scheduleTemplate), scheduleTemplate });
 });
 
 app.delete('/api/my/slots', requireLogin, (req, res) => {
@@ -1194,15 +1359,323 @@ app.delete('/api/my/slots', requireLogin, (req, res) => {
   if (!setting) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
   setting.slots = null;
   setting.updatedAt = new Date().toISOString();
+  setting.revision = Math.max(1, Number(setting.revision || 1)) + 1;
+  for (const term of termsForAccount(db, req.auth.accountId)) term.scheduleTemplateId = 'legacy-default';
   if (accountIdForUser(user) === req.auth.accountId) delete user.slots;
   writeDb(db);
-  res.json({ ok: true, accountId: req.auth.accountId, slots: db.slots });
+  const scheduleTemplate = scheduleTemplateById(db, 'legacy-default') || createLegacyDefaultTemplate(db.slots);
+  res.json({ ok: true, accountId: req.auth.accountId, slots: projectTemplateToSlots(scheduleTemplate), scheduleTemplate });
+});
+
+app.put('/api/my/schedule-template', requireLogin, (req, res) => {
+  const db = readDb();
+  const term = activeTermForAccount(db, req.auth.accountId);
+  if (!term) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
+  const requestedTemplateId = String(req.body?.selectTemplateId || '').trim();
+  if (requestedTemplateId) {
+    const selected = scheduleTemplateById(db, requestedTemplateId, req.auth.accountId);
+    if (!selected) return res.status(404).json({ ok: false, message: '所选课程时间表不存在或不属于当前账号' });
+    term.scheduleTemplateId = selected.templateId;
+    term.updatedAt = new Date().toISOString();
+    term.revision = Math.max(1, Number(term.revision || 1)) + 1;
+    db.courses = db.courses.map((course) => {
+      if (course.accountId !== req.auth.accountId || course.termKey !== term.termKey) return course;
+      const mapped = normalizeCourseSlotFields({
+        ...course,
+        sourceStartSlot: course.sourceStartSlot ?? course.startSlot ?? course.slot,
+        sourceEndSlot: course.sourceEndSlot ?? course.endSlot ?? course.startSlot ?? course.slot
+      }, selected);
+      return mapped ? { ...course, ...mapped, updatedAt: term.updatedAt, revision: Math.max(1, Number(course.revision || 1)) + 1 } : course;
+    });
+    writeDb(db);
+    return res.json({ ok: true, accountId: req.auth.accountId, scheduleTemplate: selected, slots: projectTemplateToSlots(selected), activeTerm: publicTerm(db, term) });
+  }
+  const current = scheduleTemplateForTerm(db, term);
+  const incomingPeriods = Array.isArray(req.body?.periods) ? req.body.periods : [];
+  const incomingByKey = new Map(incomingPeriods.map((period) => [String(period?.slotKey || ''), period]));
+  const periods = current.periods.map((period) => {
+    const patch = incomingByKey.get(period.slotKey) || {};
+    return {
+      ...period,
+      // 普通设置只允许修改展示与时间；sourceSlot / slotKey / logicalOrder 保持不变。
+      displayNumber: patch.displayNumber === null ? null : (Number.isInteger(Number(patch.displayNumber)) ? Number(patch.displayNumber) : period.displayNumber),
+      displayLabel: String(patch.displayLabel ?? patch.label ?? period.displayLabel).trim(),
+      startTime: String(patch.startTime ?? patch.start ?? period.startTime).trim(),
+      endTime: String(patch.endTime ?? patch.end ?? period.endTime).trim(),
+      visibilityPolicy: ['AUTO', 'ALWAYS'].includes(patch.visibilityPolicy) ? patch.visibilityPolicy : period.visibilityPolicy,
+      kind: period.kind
+    };
+  });
+  for (const period of periods) {
+    if (!isValidTimeText(period.startTime) || !isValidTimeText(period.endTime) || timeTextToMinutes(period.startTime) >= timeTextToMinutes(period.endTime)) {
+      return res.status(400).json({ ok: false, message: `${period.displayLabel || period.slotKey} 的时间无效` });
+    }
+  }
+  const templateId = current.accountId === req.auth.accountId
+    ? current.templateId
+    : `term-template-${crypto.createHash('sha1').update(`${req.auth.accountId}:${term.termKey}`).digest('hex').slice(0, 16)}`;
+  const updatedAt = new Date().toISOString();
+  const scheduleTemplate = normalizeScheduleTemplate({
+    ...current,
+    templateId,
+    accountId: req.auth.accountId,
+    termKey: term.termKey,
+    name: String(req.body?.name || current.name || '课程时间表').trim(),
+    periods,
+    createdAt: current.accountId === req.auth.accountId ? current.createdAt : updatedAt,
+    updatedAt,
+    revision: Math.max(1, Number(current.revision || 1)) + 1
+  });
+  db.scheduleTemplates = (db.scheduleTemplates || []).filter((item) => item.templateId !== templateId);
+  db.scheduleTemplates.push(scheduleTemplate);
+  term.scheduleTemplateId = templateId;
+  term.updatedAt = updatedAt;
+  term.revision = Math.max(1, Number(term.revision || 1)) + 1;
+  writeDb(db);
+  res.json({ ok: true, accountId: req.auth.accountId, scheduleTemplate, slots: projectTemplateToSlots(scheduleTemplate) });
+});
+
+function mutationPayloadHash(mutation = {}) {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    accountId: mutation.accountId || '',
+    termKey: mutation.termKey || '',
+    entityType: mutation.entityType || '',
+    entityLocalId: mutation.entityLocalId || '',
+    serverId: mutation.serverId || '',
+    operationType: mutation.operationType || '',
+    baseRevision: mutation.baseRevision ?? null,
+    payload: mutation.payload || {}
+  })).digest('hex');
+}
+
+function deterministicCourseId(accountId, operationId) {
+  return `c_sync_${crypto.createHash('sha256').update(`${accountId}:${operationId}`).digest('hex').slice(0, 24)}`;
+}
+
+function mutationConflict(res, entity, message = '服务器记录已发生变化，本地修改已保留等待处理') {
+  return res.status(409).json({
+    ok: false,
+    conflict: true,
+    message,
+    serverEntity: entity || null,
+    serverRevision: Math.max(0, Number(entity?.revision || 0))
+  });
+}
+
+app.get('/api/my/sync/snapshot', requireLogin, (req, res) => {
+  const db = readDb();
+  const user = db.users.find((item) => item.id === req.auth.user.id) || req.auth.user;
+  const account = accountForUser(db, user.id, req.auth.accountId);
+  if (!account) return res.status(404).json({ ok: false, message: '账号不存在' });
+  const terms = termsForAccount(db, req.auth.accountId);
+  const activeTerm = activeTermForAccount(db, req.auth.accountId);
+  const scheduleTemplate = scheduleTemplateForTerm(db, activeTerm);
+  const setting = settingForAccount(db, user.id, req.auth.accountId);
+  const courses = terms.flatMap((term) => coursesForAccount(db, req.auth.accountId, term.termKey));
+  res.json({
+    ok: true,
+    accountId: req.auth.accountId,
+    account: {
+      accountId: account.id,
+      userId: account.userId,
+      activeTermKey: account.activeTermKey,
+      updatedAt: account.updatedAt || '',
+      revision: Math.max(1, Number(account.revision || 1))
+    },
+    user: publicUser(user, req.auth.accountId),
+    meta: { ...db.meta, termStart: activeTerm?.termStart || '', totalWeeks: activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS },
+    activeTerm: publicTerm(db, activeTerm),
+    activeTermKey: activeTerm?.termKey || '',
+    availableTerms: terms.map((term) => publicTerm(db, term)),
+    courses,
+    preferences: sanitizePreferences(setting?.preferences || user.preferences || {}),
+    preferenceRevision: Math.max(1, Number(setting?.revision || 1)),
+    scheduleTemplate,
+    scheduleTemplates: scheduleTemplatesForAccount(db, req.auth.accountId),
+    slots: projectTemplateToSlots(scheduleTemplate),
+    serverTime: new Date().toISOString()
+  });
+});
+
+app.post('/api/my/sync/mutation', requireLogin, (req, res) => {
+  const mutation = req.body && typeof req.body === 'object' ? req.body : {};
+  const operationId = String(mutation.operationId || '').trim();
+  const accountId = String(mutation.accountId || req.auth.accountId).trim();
+  const termKey = String(mutation.termKey || '').trim();
+  const entityType = String(mutation.entityType || '').trim().toUpperCase();
+  const operationType = String(mutation.operationType || '').trim().toUpperCase();
+  const payload = mutation.payload && typeof mutation.payload === 'object' ? mutation.payload : {};
+  if (!operationId || operationId.length > 160) return res.status(400).json({ ok: false, message: 'operationId 无效' });
+  if (accountId !== req.auth.accountId) return res.status(403).json({ ok: false, message: '同步账号与登录账号不一致' });
+  if (!['CREATE', 'UPDATE', 'DELETE'].includes(operationType)) return res.status(400).json({ ok: false, message: 'operationType 无效' });
+  const db = readDb();
+  const hash = mutationPayloadHash({ ...mutation, accountId, termKey, entityType, operationType, payload });
+  const replay = (db.processedMutations || []).find((item) => item.accountId === accountId && item.operationId === operationId);
+  if (replay) {
+    if (replay.payloadHash !== hash) return res.status(409).json({ ok: false, conflict: true, message: '相同 operationId 的内容不一致' });
+    return res.status(Number(replay.statusCode || 200)).json(replay.response);
+  }
+
+  const account = accountForUser(db, req.auth.user.id, accountId);
+  if (!account) return res.status(404).json({ ok: false, message: '账号不存在' });
+  const scopedTerm = termKey ? termsForAccount(db, accountId).find((term) => term.termKey === termKey) : activeTermForAccount(db, accountId);
+  if (['COURSE', 'TERM', 'SCHEDULE_TEMPLATE', 'SLOTS'].includes(entityType) && !scopedTerm) {
+    return res.status(404).json({ ok: false, message: '学期不存在或不属于当前账号' });
+  }
+  const baseRevision = Number(mutation.baseRevision ?? payload.baseRevision ?? 0);
+  const now = new Date().toISOString();
+  let response = { ok: true, operationId, accountId, termKey, entityType, operationType };
+
+  if (entityType === 'COURSE') {
+    const template = scheduleTemplateForTerm(db, scopedTerm);
+    const localId = String(mutation.entityLocalId || payload.localId || payload.clientLocalId || '').trim();
+    const explicitIds = [mutation.serverId, payload.serverId, ...(Array.isArray(payload.underlyingIds) ? payload.underlyingIds : [])]
+      .map((value) => String(value || '').trim()).filter(Boolean);
+    if (operationType === 'CREATE') {
+      let course = db.courses.find((item) => item.accountId === accountId && item.termKey === scopedTerm.termKey && localId && item.clientLocalId === localId);
+      if (!course) {
+        const serverId = deterministicCourseId(accountId, operationId);
+        course = normalizeCourse({ ...payload, id: serverId, clientLocalId: localId, createdAt: now, updatedAt: now, revision: 1 }, req.auth.user.id, accountId, scopedTerm, template);
+        if (!course.name || !course.day || !course.slot) return res.status(400).json({ ok: false, message: '课程名、星期、节次必填' });
+        db.courses.push(course);
+      }
+      response = { ...response, serverId: course.id, localId, revision: course.revision, updatedAt: course.updatedAt, serverEntity: course };
+    } else {
+      const targets = db.courses.filter((item) => item.accountId === accountId && item.termKey === scopedTerm.termKey && (
+        explicitIds.includes(String(item.id)) || (localId && item.clientLocalId === localId)
+      ));
+      if (operationType === 'DELETE') {
+        if (targets.some((item) => baseRevision > 0 && Number(item.revision || 1) !== baseRevision)) {
+          return mutationConflict(res, targets[0]);
+        }
+        const ids = new Set(targets.map((item) => item.id));
+        db.courses = db.courses.filter((item) => !ids.has(item.id));
+        response = { ...response, serverId: String(mutation.serverId || payload.serverId || ''), deleted: true, deletedCount: ids.size };
+      } else {
+        if (!targets.length) return res.status(404).json({ ok: false, message: '课程不存在或不属于指定学期' });
+        if (targets.some((item) => baseRevision > 0 && Number(item.revision || 1) !== baseRevision)) {
+          return mutationConflict(res, targets[0]);
+        }
+        const updated = [];
+        for (const target of targets) {
+          const next = normalizeCourse({
+            ...target,
+            ...payload,
+            id: target.id,
+            clientLocalId: target.clientLocalId || localId,
+            createdAt: target.createdAt,
+            updatedAt: now,
+            revision: Math.max(1, Number(target.revision || 1)) + 1
+          }, req.auth.user.id, accountId, scopedTerm, template);
+          db.courses[db.courses.indexOf(target)] = next;
+          updated.push(next);
+        }
+        response = { ...response, serverId: updated[0].id, localId, revision: updated[0].revision, updatedAt: now, serverEntity: updated[0] };
+      }
+    }
+  } else if (entityType === 'PREFERENCES') {
+    const setting = settingForAccount(db, req.auth.user.id, accountId);
+    if (!setting) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
+    if (baseRevision > 0 && Number(setting.revision || 1) !== baseRevision) return mutationConflict(res, { ...setting, preferences: sanitizePreferences(setting.preferences || {}) });
+    setting.preferences = sanitizePreferences(payload.preferences || payload);
+    setting.updatedAt = now;
+    setting.revision = Math.max(1, Number(setting.revision || 1)) + 1;
+    response = { ...response, revision: setting.revision, updatedAt: now, preferences: setting.preferences };
+  } else if (entityType === 'TERM') {
+    if (baseRevision > 0 && Number(scopedTerm.revision || 1) !== baseRevision) return mutationConflict(res, publicTerm(db, scopedTerm));
+    if (payload.termStart !== undefined) {
+      const termStart = String(payload.termStart || '').trim();
+      if (termStart && (!normalizeDateText(termStart) || !isMondayTermStart(termStart))) return res.status(400).json({ ok: false, message: 'termStart 必须为空或第一教学周周一' });
+      scopedTerm.termStart = normalizeDateText(termStart);
+    }
+    if (payload.totalWeeks !== undefined) {
+      const totalWeeks = Number(payload.totalWeeks);
+      if (!Number.isInteger(totalWeeks) || totalWeeks < 1 || totalWeeks > 60) return res.status(400).json({ ok: false, message: '学期总周数必须是 1 到 60 的整数' });
+      scopedTerm.totalWeeks = totalWeeks;
+      scopedTerm.totalWeeksSource = 'manual';
+    }
+    if (payload.scheduleTemplateId) {
+      const selectedTemplate = scheduleTemplateById(db, payload.scheduleTemplateId, accountId);
+      if (selectedTemplate) {
+        scopedTerm.scheduleTemplateId = selectedTemplate.templateId;
+        db.courses = db.courses.map((course) => {
+          if (course.accountId !== accountId || course.termKey !== scopedTerm.termKey) return course;
+          const mapped = normalizeCourseSlotFields({
+            ...course,
+            sourceStartSlot: course.sourceStartSlot ?? course.startSlot ?? course.slot,
+            sourceEndSlot: course.sourceEndSlot ?? course.endSlot ?? course.startSlot ?? course.slot
+          }, selectedTemplate);
+          return mapped ? {
+            ...course,
+            ...mapped,
+            updatedAt: now,
+            revision: Math.max(1, Number(course.revision || 1)) + 1
+          } : course;
+        });
+      }
+    }
+    scopedTerm.updatedAt = now;
+    scopedTerm.revision = Math.max(1, Number(scopedTerm.revision || 1)) + 1;
+    response = { ...response, revision: scopedTerm.revision, updatedAt: now, activeTerm: publicTerm(db, scopedTerm) };
+  } else if (entityType === 'ACTIVE_TERM') {
+    const targetKey = String(payload.termKey || termKey).trim();
+    const target = termsForAccount(db, accountId).find((term) => term.termKey === targetKey);
+    if (!target) return res.status(404).json({ ok: false, message: '学期不存在或不属于当前账号' });
+    if (baseRevision > 0 && Number(account.revision || 1) !== baseRevision) return mutationConflict(res, account);
+    account.activeTermKey = targetKey;
+    account.updatedAt = now;
+    account.revision = Math.max(1, Number(account.revision || 1)) + 1;
+    response = { ...response, termKey: targetKey, revision: account.revision, updatedAt: now };
+  } else if (entityType === 'SCHEDULE_TEMPLATE' || entityType === 'SLOTS') {
+    const current = scheduleTemplateForTerm(db, scopedTerm);
+    if (baseRevision > 0 && Number(current.revision || 1) !== baseRevision) return mutationConflict(res, current);
+    const candidate = payload.scheduleTemplate || payload;
+    const templateId = current.accountId === accountId
+      ? current.templateId
+      : `term-template-${crypto.createHash('sha1').update(`${accountId}:${scopedTerm.termKey}`).digest('hex').slice(0, 16)}`;
+    const periods = Array.isArray(candidate.periods) && candidate.periods.length
+      ? candidate.periods
+      : Array.isArray(candidate.slots) ? createLegacyDefaultTemplate(candidate.slots).periods : current.periods;
+    const scheduleTemplate = normalizeScheduleTemplate({
+      ...current,
+      ...candidate,
+      templateId,
+      accountId,
+      termKey: scopedTerm.termKey,
+      periods,
+      createdAt: current.accountId === accountId ? current.createdAt : now,
+      updatedAt: now,
+      revision: Math.max(1, Number(current.revision || 1)) + 1
+    });
+    if (!scheduleTemplate.periods.length) return res.status(400).json({ ok: false, message: '课节模板不能为空' });
+    db.scheduleTemplates = (db.scheduleTemplates || []).filter((item) => item.templateId !== templateId);
+    db.scheduleTemplates.push(scheduleTemplate);
+    scopedTerm.scheduleTemplateId = templateId;
+    scopedTerm.updatedAt = now;
+    scopedTerm.revision = Math.max(1, Number(scopedTerm.revision || 1)) + 1;
+    response = { ...response, revision: scheduleTemplate.revision, updatedAt: now, scheduleTemplate, slots: projectTemplateToSlots(scheduleTemplate) };
+  } else {
+    return res.status(400).json({ ok: false, message: `不支持的同步实体：${entityType || '空'}` });
+  }
+
+  db.processedMutations.push({ operationId, accountId, termKey, payloadHash: hash, statusCode: 200, response, createdAt: now });
+  const accountOperations = db.processedMutations.filter((item) => item.accountId === accountId);
+  if (accountOperations.length > 1000) {
+    const remove = new Set(accountOperations.slice(0, accountOperations.length - 1000));
+    db.processedMutations = db.processedMutations.filter((item) => !remove.has(item));
+  }
+  writeDb(db);
+  return res.json(response);
 });
 
 
-function buildUserBackup(db, user, accountId) {
+function buildUserBackup(db, user, accountId, requestedTermKey = '') {
   const setting = settingForAccount(db, user.id, accountId);
-  const termState = activeTermPayload(db, accountId);
+  const availableTerms = termsForAccount(db, accountId);
+  const selectedTerm = availableTerms.find((term) => term.termKey === requestedTermKey)
+    || activeTermForAccount(db, accountId);
+  const selectedTemplate = scheduleTemplateForTerm(db, selectedTerm);
+  const activeTerm = publicTerm(db, selectedTerm);
   return {
     app: 'xiaode-course-table',
     appVersion: APP_VERSION,
@@ -1218,11 +1691,13 @@ function buildUserBackup(db, user, accountId) {
       username: user.username
     },
     preferences: sanitizePreferences(setting?.preferences || user.preferences || {}),
-    meta: { ...db.meta, termStart: termState.activeTerm?.termStart || '', totalWeeks: termState.activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS },
-    activeTerm: termState.activeTerm,
-    availableTerms: termState.availableTerms,
-    slots: Array.isArray(setting?.slots) ? normalizeSlotsInput(setting.slots, db.slots) : db.slots,
-    courses: coursesForAccount(db, accountId)
+    meta: { ...db.meta, termStart: activeTerm?.termStart || '', totalWeeks: activeTerm?.totalWeeks || DEFAULT_TOTAL_WEEKS },
+    activeTerm,
+    availableTerms: availableTerms.map((term) => publicTerm(db, term)),
+    scheduleTemplate: selectedTemplate,
+    scheduleTemplates: scheduleTemplatesForAccount(db, accountId),
+    slots: projectTemplateToSlots(selectedTemplate),
+    courses: coursesForAccount(db, accountId, selectedTerm?.termKey || '')
       .map((course) => {
         const { userId, accountId, ...rest } = course;
         return rest;
@@ -1332,7 +1807,7 @@ function addPreImportBackup(db, user, accountId, traceId, xnm, xqm) {
     xnm: String(xnm || ''),
     xqm: String(xqm || ''),
     createdAt: new Date().toISOString(),
-    backup: buildUserBackup(db, user, accountId)
+    backup: buildUserBackup(db, user, accountId, buildTermKey(accountId, String(xnm || ''), String(xqm || '')))
   };
   const sameAccount = db.backups.filter((item) => item.accountId === accountId && item.kind === 'pre-import');
   const removeIds = new Set(sameAccount.slice(9).map((item) => item.id));
@@ -1340,11 +1815,16 @@ function addPreImportBackup(db, user, accountId, traceId, xnm, xqm) {
   return entry.id;
 }
 
-function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, selectedTermLabel, trace, importCode = '' }) {
+function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, selectedTermLabel, scheduleTemplateId = '', trace, importCode = '' }) {
   const requested = validateImportTermParams({ xnm, xqm, selectedTermLabel });
   if (!requested.ok) return importFailure(trace, 400, requested.reasonCode, requested.message);
   const termKey = buildTermKey(accountId, requested.xnm, requested.xqm);
   const existingTerm = termsForAccount(db, accountId).find((term) => term.termKey === termKey) || null;
+  const requestedTemplate = scheduleTemplateId ? scheduleTemplateById(db, scheduleTemplateId, accountId) : null;
+  if (scheduleTemplateId && !requestedTemplate) {
+    return importFailure(trace, 400, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, '冻结的课程时间表不存在或不属于当前账号。');
+  }
+  const importTemplate = requestedTemplate || scheduleTemplateForTerm(db, existingTerm || activeTermForAccount(db, accountId));
   const analysis = analyzeJwxtImport(jwxtData, {
     traceId: trace.traceId,
     userId: user.id,
@@ -1353,6 +1833,8 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     xnm: requested.xnm,
     xqm: requested.xqm,
     selectedTermLabel: requested.selectedTermLabel,
+    scheduleTemplateId: importTemplate.templateId,
+    scheduleTemplate: importTemplate,
     maxWeeks: 60
   });
   const traceBase = {
@@ -1419,7 +1901,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     selectedTermLabel: requested.selectedTermLabel
   };
   const normalized = analysis.courses
-    .map((item) => normalizeCourse(item, user.id, accountId, targetTerm))
+    .map((item) => normalizeCourse(item, user.id, accountId, targetTerm, importTemplate))
     .filter((course) => course.name && course.day >= 1 && course.day <= 7 && course.slot >= 1 && course.slot <= 12 && course.weeks.length);
   if (!normalized.length || normalized.some((course) => course.accountId !== accountId)) {
     return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '规范化结果为空或 accountId 校验失败。', { ...traceBase, ...termTrace });
@@ -1433,7 +1915,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
   let appendMergeEvents = [];
   let appendWarnings = [];
   if (!replace) {
-    const appended = mergeCourseRecords([...existingSameTerm, ...normalized]);
+    const appended = mergeCourseRecords([...existingSameTerm, ...normalized], { scheduleTemplate: importTemplate });
     importedCourses = appended.courses;
     appendMergeEvents = appended.events;
     appendWarnings = appended.warnings;
@@ -1444,8 +1926,27 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
   }
 
   addPreImportBackup(nextDb, user, accountId, trace.traceId, requested.xnm, requested.xqm);
-  nextDb.courses = nextCourses;
   const importedAt = new Date().toISOString();
+  // The frozen template is the term's canonical mapping for this import. Align every
+  // retained course in the target scope from its preserved source slots as well, so
+  // manual courses and imported courses cannot end up using different row systems.
+  nextDb.courses = nextCourses.map((course) => {
+    if (course.accountId !== accountId || course.termKey !== termKey) return course;
+    const mapped = normalizeCourseSlotFields({
+      ...course,
+      sourceStartSlot: course.sourceStartSlot ?? course.startSlot ?? course.slot,
+      sourceEndSlot: course.sourceEndSlot ?? course.endSlot ?? course.startSlot ?? course.slot
+    }, importTemplate);
+    if (!mapped) return course;
+    const templateChanged = course.scheduleTemplateId !== importTemplate.templateId;
+    return {
+      ...course,
+      ...mapped,
+      scheduleTemplateId: importTemplate.templateId,
+      updatedAt: templateChanged ? importedAt : course.updatedAt,
+      revision: templateChanged ? Math.max(1, Number(course.revision || 1)) + 1 : course.revision
+    };
+  });
   const nextAccount = accountForUser(nextDb, user.id, accountId);
   if (!nextAccount) {
     return importFailure(trace, 422, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '导入账号不存在，旧课程保持不变。', { ...traceBase, ...termTrace });
@@ -1465,6 +1966,8 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
     totalWeeksSource,
     createdAt: nextTerm?.createdAt || importedAt,
     updatedAt: importedAt,
+    revision: Math.max(1, Number(nextTerm?.revision || 1)) + 1,
+    scheduleTemplateId: importTemplate.templateId,
     lastImportTraceId: trace.traceId
   };
   nextDb.terms = [...termsForAccount(nextDb, accountId).filter((term) => term.termKey !== termKey), savedTerm, ...(nextDb.terms || []).filter((term) => term.accountId !== accountId)];
@@ -1483,7 +1986,7 @@ function executeJwxtImport({ db, user, accountId, jwxtData, replace, xnm, xqm, s
   nextDb.meta.lastAndroidImportAccountId = accountId;
   nextDb.meta.lastImportTraceId = trace.traceId;
   nextDb.meta.courseVersion = Number(nextDb.meta.courseVersion || 0) + 1;
-  const afterCount = nextCourses.filter((course) => courseBelongsToAccount(course, accountId) && course.termKey === termKey).length;
+  const afterCount = nextDb.courses.filter((course) => courseBelongsToAccount(course, accountId) && course.termKey === termKey).length;
   const summary = {
     ...analysis.summary,
     merged: analysis.summary.merged + appendMergeEvents.length,
@@ -1572,7 +2075,7 @@ function unpackBackupPayload(input = {}) {
   return { courses, slots };
 }
 
-function normalizeBackupForAccount(input, userId, accountId, defaultSlots = [], term = null) {
+function normalizeBackupForAccount(input, userId, accountId, defaultSlots = [], term = null, scheduleTemplate = null) {
   const { courses, slots } = unpackBackupPayload(input);
   const normalizedCourses = courses
     .map((item) => {
@@ -1581,7 +2084,7 @@ function normalizeBackupForAccount(input, userId, accountId, defaultSlots = [], 
       delete cloned.userId;
       delete cloned.accountId;
       delete cloned.termKey;
-      return normalizeCourse(cloned, userId, accountId, term);
+      return normalizeCourse(cloned, userId, accountId, term, scheduleTemplate);
     })
     .filter((course) => course.name && course.day && course.slot);
   const normalizedSlots = Array.isArray(slots) && slots.length ? normalizeSlotsInput(slots, defaultSlots) : null;
@@ -1604,7 +2107,7 @@ app.post('/api/my/restore', requireLogin, (req, res) => {
   if (!setting || !reminder) return res.status(409).json({ ok: false, message: '账号设置记录不存在' });
   const activeTerm = activeTermForAccount(db, req.auth.accountId);
   if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
-  const normalized = normalizeBackupForAccount(backup || req.body, user.id, req.auth.accountId, db.slots, activeTerm);
+  const normalized = normalizeBackupForAccount(backup || req.body, user.id, req.auth.accountId, db.slots, activeTerm, scheduleTemplateForTerm(db, activeTerm));
   if (!normalized.courses.length && !normalized.slots) {
     return res.status(400).json({ ok: false, message: '备份文件里没有可恢复的课程或节次时间' });
   }
@@ -1661,7 +2164,7 @@ app.post('/api/my/courses', requireLogin, (req, res) => {
   const db = readDb();
   const activeTerm = activeTermForAccount(db, req.auth.accountId);
   if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
-  const course = normalizeCourse(req.body || {}, req.auth.user.id, req.auth.accountId, activeTerm);
+  const course = normalizeCourse(req.body || {}, req.auth.user.id, req.auth.accountId, activeTerm, scheduleTemplateForTerm(db, activeTerm));
   if (!course.name || !course.day || !course.slot) {
     return res.status(400).json({ ok: false, message: '课程名、星期、节次必填' });
   }
@@ -1682,7 +2185,15 @@ app.put('/api/my/courses/:id', requireLogin, (req, res) => {
     patch.startSlot = req.body.slot;
     patch.endSlot = req.body.slot;
   }
-  db.courses[idx] = normalizeCourse(patch, req.auth.user.id, req.auth.accountId, activeTerm);
+  if (req.body?.slot !== undefined || req.body?.startSlot !== undefined || req.body?.endSlot !== undefined) {
+    patch.sourceStartSlot = req.body?.sourceStartSlot ?? req.body?.startSlot ?? req.body?.slot;
+    patch.sourceEndSlot = req.body?.sourceEndSlot ?? req.body?.endSlot ?? req.body?.startSlot ?? req.body?.slot;
+    patch.startSlotKey = req.body?.startSlotKey || '';
+    patch.endSlotKey = req.body?.endSlotKey || '';
+  }
+  patch.updatedAt = new Date().toISOString();
+  patch.revision = Math.max(1, Number(db.courses[idx].revision || 1)) + 1;
+  db.courses[idx] = normalizeCourse(patch, req.auth.user.id, req.auth.accountId, activeTerm, scheduleTemplateForTerm(db, activeTerm));
   const updated = db.courses[idx];
   const savedDb = writeDb(db);
   res.json({ ok: true, course: retainedLogicalCourse(savedDb, updated) || updated });
@@ -1719,12 +2230,18 @@ app.post('/api/my/import', requireLogin, (req, res) => {
   const activeTerm = activeTermForAccount(db, req.auth.accountId);
   if (!activeTerm) return res.status(409).json({ ok: false, message: '当前账号没有激活学期' });
   const normalized = courses
-    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId, activeTerm))
+    .map((item) => normalizeCourse(item, req.auth.user.id, req.auth.accountId, activeTerm, scheduleTemplateForTerm(db, activeTerm)))
     .filter((c) => c.name && c.day && c.slot);
+  if (!normalized.length) {
+    return res.status(400).json({ ok: false, message: '导入内容里没有有效课程，原课表未改变' });
+  }
 
   const existing = db.courses.filter((course) => courseBelongsToAccount(course, req.auth.accountId) && course.termKey === activeTerm.termKey);
   const preserved = db.courses.filter((course) => !(courseBelongsToAccount(course, req.auth.accountId) && course.termKey === activeTerm.termKey));
-  const consolidated = mergeCourseRecords(replace ? normalized : [...existing, ...normalized], { separateSources: true });
+  const consolidated = mergeCourseRecords(replace ? normalized : [...existing, ...normalized], {
+    separateSources: true,
+    scheduleTemplate: scheduleTemplateForTerm(db, activeTerm)
+  });
   db.courses = [...preserved, ...consolidated.courses];
   writeDb(db);
   res.json({ ok: true, count: normalized.length, logicalCount: consolidated.courses.length, mergedCount: consolidated.events.length });
@@ -1733,7 +2250,7 @@ app.post('/api/my/import', requireLogin, (req, res) => {
 
 // Android 导入助手专用：App 内 WebView 中由用户自己登录教务系统，App 只上传课表 JSON，不上传教务密码。
 app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
-  const { jwxtData, replace = true, xnm = '', xqm = '', selectedTermLabel = '' } = req.body || {};
+  const { jwxtData, replace = true, xnm = '', xqm = '', selectedTermLabel = '', scheduleTemplateId = '' } = req.body || {};
   const trace = importDiagnosticsStore.begin({ accountId: req.auth.accountId, replace, xnm, xqm, selectedTermLabel, requestedXnm: xnm, requestedXqm: xqm });
   const term = validateImportTermParams({ xnm, xqm, selectedTermLabel });
   if (!term.ok) {
@@ -1750,17 +2267,21 @@ app.post('/api/my/import/jwxt-json', requireLogin, (req, res) => {
     const failed = importFailure(trace, 404, IMPORT_REASON_CODES.ACCOUNT_MISMATCH, '当前账号不存在。');
     return res.status(failed.status).json(failed.body);
   }
-  const result = executeJwxtImport({ db, user, accountId: req.auth.accountId, jwxtData, replace: Boolean(replace), xnm: term.xnm, xqm: term.xqm, selectedTermLabel: term.selectedTermLabel, trace });
+  const result = executeJwxtImport({ db, user, accountId: req.auth.accountId, jwxtData, replace: Boolean(replace), xnm: term.xnm, xqm: term.xqm, selectedTermLabel: term.selectedTermLabel, scheduleTemplateId, trace });
   return res.status(result.status).json(result.body);
 });
 
 
 app.post('/api/my/import-code', requireLogin, (req, res) => {
-  const { replace = true, xnm = '', xqm = '', selectedTermLabel = '' } = req.body || {};
+  const { replace = true, xnm = '', xqm = '', selectedTermLabel = '', scheduleTemplateId = '' } = req.body || {};
   const term = validateImportTermParams({ xnm, xqm, selectedTermLabel });
   if (!term.ok) return res.status(400).json({ ok: false, reasonCode: term.reasonCode, message: term.message });
   const db = readDb();
   ensureImportCodes(db);
+  const selectedTemplate = scheduleTemplateId
+    ? scheduleTemplateById(db, String(scheduleTemplateId).trim(), req.auth.accountId)
+    : scheduleTemplateForTerm(db, activeTermForAccount(db, req.auth.accountId));
+  if (!selectedTemplate) return res.status(400).json({ ok: false, message: '课程时间表不存在或不属于当前账号' });
 
   let code = makeImportCode();
   while (db.importCodes.some((item) => item.code === code && !item.usedAt)) code = makeImportCode();
@@ -1776,12 +2297,13 @@ app.post('/api/my/import-code', requireLogin, (req, res) => {
     selectedTermLabel: term.selectedTermLabel,
     xnm: term.xnm,
     xqm: term.xqm,
+    scheduleTemplateId: selectedTemplate.templateId,
     createdAt: new Date().toISOString(),
     expiresAt,
     usedAt: null
   });
   writeDb(db);
-  res.json({ ok: true, code, accountId: req.auth.accountId, expiresAt, replace: Boolean(replace), selectedTermLabel: term.selectedTermLabel, xnm: term.xnm, xqm: term.xqm });
+  res.json({ ok: true, code, accountId: req.auth.accountId, expiresAt, replace: Boolean(replace), selectedTermLabel: term.selectedTermLabel, xnm: term.xnm, xqm: term.xqm, scheduleTemplateId: selectedTemplate.templateId });
 });
 
 
@@ -1811,6 +2333,7 @@ app.get('/api/import-code/:code', (req, res) => {
     selectedTermLabel: term.selectedTermLabel,
     xnm: term.xnm,
     xqm: term.xqm,
+    scheduleTemplateId: record.scheduleTemplateId || 'legacy-default',
     expiresAt: record.expiresAt,
     secondsLeft,
     message: `导入码有效，剩余约 ${Math.ceil(secondsLeft / 60)} 分钟`
@@ -1825,6 +2348,7 @@ app.post('/api/import-code/:code/submit', (req, res) => {
     selectedTermLabel: submittedTermLabel = '',
     xnm: submittedXnm = '',
     xqm: submittedXqm = '',
+    scheduleTemplateId: submittedScheduleTemplateId = '',
     replace: submittedReplace
   } = req.body || {};
 
@@ -1857,6 +2381,10 @@ app.post('/api/import-code/:code/submit', (req, res) => {
     const failed = importFailure(trace, 403, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, 'Android 冻结的学期与导入码绑定学期不一致。');
     return res.status(failed.status).json(failed.body);
   }
+  if (submittedScheduleTemplateId && String(submittedScheduleTemplateId).trim() !== String(record.scheduleTemplateId || 'legacy-default')) {
+    const failed = importFailure(trace, 403, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, 'Android 冻结的课程时间表与导入码绑定模板不一致。');
+    return res.status(failed.status).json(failed.body);
+  }
   if (typeof submittedReplace !== 'boolean' || submittedReplace !== Boolean(record.replace)) {
     const failed = importFailure(trace, 403, IMPORT_REASON_CODES.INVALID_TERM_PARAMS, 'Android 冻结的覆盖模式与导入码绑定值不一致。');
     return res.status(failed.status).json(failed.body);
@@ -1884,6 +2412,7 @@ app.post('/api/import-code/:code/submit', (req, res) => {
     xnm: term.xnm,
     xqm: term.xqm,
     selectedTermLabel: term.selectedTermLabel,
+    scheduleTemplateId: record.scheduleTemplateId || 'legacy-default',
     trace,
     importCode: record.code
   });
@@ -2157,6 +2686,14 @@ app.put('/api/admin/slots', requireAdmin, (req, res) => {
   res.json({ ok: true, slots: db.slots });
 });
 
+app.use((err, req, res, next) => {
+  if (!err) return next();
+  console.error('[http]', req.method, req.path, String(err?.stack || err));
+  if (res.headersSent) return next(err);
+  return res.status(500).json({ ok: false, message: '后端处理请求失败', detail: process.env.NODE_ENV === 'test' ? String(err?.message || err) : undefined });
+});
+
+app.use('/shared', express.static(path.join(ROOT, 'shared')));
 app.use(express.static(PUBLIC_DIR));
 app.get('*', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
 

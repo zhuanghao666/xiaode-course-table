@@ -14,7 +14,8 @@ internal data class ImportTaskContext(
     val xnm: String,
     val xqm: String,
     val replace: Boolean,
-    val createdAt: Long
+    val createdAt: Long,
+    val scheduleTemplateId: String = "legacy-default"
 ) {
     init {
         require(serverBaseUrl.isNotBlank()) { "serverBaseUrl is required" }
@@ -23,6 +24,7 @@ internal data class ImportTaskContext(
         require(selectedTermLabel.isNotBlank()) { "selectedTermLabel is required" }
         require(xnm.isNotBlank()) { "xnm is required" }
         require(xqm.isNotBlank()) { "xqm is required" }
+        require(scheduleTemplateId.isNotBlank()) { "scheduleTemplateId is required" }
     }
 
     fun persistedFields(): Map<String, String> = mapOf(
@@ -31,7 +33,8 @@ internal data class ImportTaskContext(
         "accountId" to accountId,
         "selectedTermLabel" to selectedTermLabel,
         "xnm" to xnm,
-        "xqm" to xqm
+        "xqm" to xqm,
+        "scheduleTemplateId" to scheduleTemplateId
     )
 
     companion object {
@@ -45,7 +48,8 @@ internal data class ImportTaskContext(
                     xnm = fields["xnm"].orEmpty(),
                     xqm = fields["xqm"].orEmpty(),
                     replace = replace,
-                    createdAt = createdAt
+                    createdAt = createdAt,
+                    scheduleTemplateId = fields["scheduleTemplateId"].orEmpty().ifBlank { "legacy-default" }
                 )
             } catch (_: IllegalArgumentException) {
                 null

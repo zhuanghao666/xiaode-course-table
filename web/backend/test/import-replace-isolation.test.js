@@ -255,6 +255,38 @@ test('term parameters are explicit and response mismatch never writes db.json', 
   assert.notEqual(second.data.xqm, first.data.xqm);
   assert.notEqual(second.data.selectedTermLabel, first.data.selectedTermLabel);
 
+  const templateCode = await request(baseUrl, '/api/my/import-code', {
+    token: 'fixture-token-a', method: 'POST',
+    body: { replace: true, ...frozenTerm, scheduleTemplateId: 'school-a-v1' }
+  });
+  assert.equal(templateCode.status, 200);
+  assert.equal(templateCode.data.scheduleTemplateId, 'school-a-v1');
+  const frozenCode = await request(baseUrl, `/api/import-code/${templateCode.data.code}`);
+  assert.equal(frozenCode.data.scheduleTemplateId, 'school-a-v1');
+  const mismatchedTemplate = await request(baseUrl, `/api/import-code/${templateCode.data.code}/submit`, {
+    method: 'POST',
+    body: { accountId: 'account-a', replace: true, ...frozenTerm, scheduleTemplateId: 'school-b-v1', jwxtData: fixtureForTerm(frozenTerm) }
+  });
+  assert.equal(mismatchedTemplate.status, 403);
+  assert.equal(mismatchedTemplate.data.reasonCode, 'INVALID_TERM_PARAMS');
+
+  const schoolAFixture = fixtureForTerm(frozenTerm, '-模板A');
+  schoolAFixture.kbList[2] = { ...schoolAFixture.kbList[2], ksjc: 6, jsjc: 6 };
+  const matchingTemplate = await request(baseUrl, `/api/import-code/${templateCode.data.code}/submit`, {
+    method: 'POST',
+    body: { accountId: 'account-a', replace: true, ...frozenTerm, scheduleTemplateId: 'school-a-v1', jwxtData: schoolAFixture }
+  });
+  assert.equal(matchingTemplate.status, 200);
+  const templateDisk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  const importedTerm = templateDisk.terms.find((item) => item.termKey === 'account-a:2026:12');
+  const importedCourses = templateDisk.courses.filter((item) => item.accountId === 'account-a' && item.termKey === importedTerm.termKey && item.source === 'jwxt');
+  assert.equal(importedTerm.scheduleTemplateId, 'school-a-v1');
+  assert.ok(importedCourses.length > 0);
+  assert.ok(importedCourses.every((item) => item.scheduleTemplateId === importedTerm.scheduleTemplateId));
+  const afternoonP5 = importedCourses.find((item) => item.sourceStartSlot === 6);
+  assert.equal(afternoonP5.startSlotKey, 'P5');
+  assert.equal(afternoonP5.startSlot, 6);
+
   const staleContext = await request(baseUrl, `/api/import-code/${second.data.code}/submit`, {
     method: 'POST',
     body: { accountId: 'account-a', replace: true, ...firstTerm, jwxtData: fixtureForTerm(frozenTerm) }

@@ -1,54 +1,61 @@
 package com.xiaode.importhelper
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Widget state is projected directly from Room. WebView callbacks are no longer a data source,
+ * so a reboot, offline launch, or killed WebView cannot make the widget lose the active schedule.
+ */
 object WidgetDataStore {
-    private const val PREFS = "xiaode_widget_data_v11"
-    private const val KEY_UPDATED_AT = "updated_at"
-    private const val KEY_ACTIVE_ACCOUNT_ID = "active_account_id"
-    private const val KEY_ACTIVE_TERM_KEY = "active_term_key"
-    private const val KEY_PAYLOAD_PREFIX = "payload_account_term_"
+    @Deprecated("v33 widgets read Room directly")
+    fun savePayload(context: Context, payload: String) = Unit
 
-    private fun scopedPayloadKey(accountId: String, termKey: String): String = "$KEY_PAYLOAD_PREFIX$accountId::$termKey"
-
-    fun savePayload(context: Context, payload: String) {
-        val accountId = JSONObject(payload).optString("accountId", "").trim()
-        val activeTermKey = JSONObject(payload).optString("activeTermKey", "").trim()
-        require(accountId.isNotBlank()) { "Widget payload is missing accountId" }
-        require(activeTermKey.isNotBlank()) { "Widget payload is missing activeTermKey" }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_ACTIVE_ACCOUNT_ID, accountId)
-            .putString(KEY_ACTIVE_TERM_KEY, activeTermKey)
-            .putString(scopedPayloadKey(accountId, activeTermKey), payload)
-            .putLong(KEY_UPDATED_AT, System.currentTimeMillis())
-            .apply()
+    fun getPayload(context: Context): String = runBlocking(Dispatchers.IO) {
+        val dao = XiaoDeDatabase.get(context).dao()
+        val account = dao.currentAccount() ?: return@runBlocking ""
+        val terms = dao.terms(account.accountId)
+        val term = terms.firstOrNull { it.termKey == account.activeTermKey } ?: terms.firstOrNull()
+            ?: return@runBlocking ""
+        val template = dao.template(account.accountId, term.scheduleTemplateId)
+            ?: dao.template("", "legacy-default")
+            ?: LocalJsonMapper.templateToEntity(ScheduleTemplateDefaults.legacy())
+        JSONObject()
+            .put("version", 5)
+            .put("accountId", account.accountId)
+            .put("activeTermKey", term.termKey)
+            .put("scheduleName", account.name.ifBlank { "我的课表" })
+            .put("selectedTermLabel", term.selectedTermLabel)
+            .put("meta", JSONObject()
+                .put("termStart", term.termStart)
+                .put("totalWeeks", term.totalWeeks)
+                .put("totalWeeksReliable", term.totalWeeksSource.isNotBlank()))
+            .put("activeTerm", LocalJsonMapper.termToJson(term))
+            .put("availableTerms", JSONArray(terms.map { LocalJsonMapper.termToJson(it) }))
+            .put("scheduleTemplate", LocalJsonMapper.templateJson(template))
+            .put("slots", ScheduleTemplateDefaults.slots(LocalJsonMapper.templateJson(template)))
+            .put("courses", JSONArray(dao.courses(account.accountId, term.termKey).map { LocalJsonMapper.courseToJson(it) }))
+            .put("preferences", try {
+                JSONObject(dao.preference(account.accountId)?.preferencesJson ?: "{}")
+            } catch (_: Throwable) { JSONObject() })
+            .toString()
     }
 
-    fun getPayload(context: Context): String {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val accountId = prefs.getString(KEY_ACTIVE_ACCOUNT_ID, "").orEmpty()
-        val termKey = prefs.getString(KEY_ACTIVE_TERM_KEY, "").orEmpty()
-        if (accountId.isNotBlank() && termKey.isNotBlank()) {
-            return prefs.getString(scopedPayloadKey(accountId, termKey), "") ?: ""
-        }
-        return ""
+    fun getActiveAccountId(context: Context): String = runBlocking(Dispatchers.IO) {
+        XiaoDeDatabase.get(context).dao().currentAccount()?.accountId.orEmpty()
     }
 
-    fun getActiveAccountId(context: Context): String {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_ACTIVE_ACCOUNT_ID, "")
-            .orEmpty()
+    fun getActiveTermKey(context: Context): String = runBlocking(Dispatchers.IO) {
+        XiaoDeDatabase.get(context).dao().currentAccount()?.activeTermKey.orEmpty()
     }
 
-    fun getActiveTermKey(context: Context): String {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_ACTIVE_TERM_KEY, "")
-            .orEmpty()
-    }
-
-    fun getUpdatedAt(context: Context): Long {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_UPDATED_AT, 0L)
+    fun getUpdatedAt(context: Context): Long = runBlocking(Dispatchers.IO) {
+        val dao = XiaoDeDatabase.get(context).dao()
+        val account = dao.currentAccount() ?: return@runBlocking 0L
+        val sync = dao.syncMetadata(account.accountId) ?: return@runBlocking 0L
+        maxOf(sync.lastPullAt, sync.lastPushAt, sync.lastAttemptAt)
     }
 }

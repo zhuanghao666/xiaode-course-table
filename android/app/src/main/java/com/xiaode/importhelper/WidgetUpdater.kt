@@ -13,16 +13,20 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 object WidgetUpdater {
     private val DAYS = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    private val executor = Executors.newSingleThreadExecutor()
 
     data class Slot(
         val slot: Int,
         val label: String,
         val range: String,
         val start: String,
-        val end: String
+        val end: String,
+        val displayNumber: Int? = null,
+        val slotKey: String = ""
     )
 
     data class Course(
@@ -70,9 +74,14 @@ object WidgetUpdater {
         if (ids.isNotEmpty()) update(context, manager, ids)
     }
 
-    fun update(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
-        for (id in appWidgetIds) {
-            manager.updateAppWidget(id, buildViews(context))
+    fun update(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray, onFinished: (() -> Unit)? = null) {
+        val appContext = context.applicationContext
+        executor.execute {
+            try {
+                for (id in appWidgetIds) manager.updateAppWidget(id, buildViews(appContext))
+            } finally {
+                onFinished?.invoke()
+            }
         }
     }
 
@@ -172,7 +181,7 @@ object WidgetUpdater {
                 views.setTextViewText(R.id.widgetMeta2, display.subText)
             } else {
                 views.setTextViewText(R.id.widgetCourseName, course.name.ifBlank { "未命名课程" })
-                val sectionLabel = courseSectionLabel(CourseSlotRange(course.startSlot, course.endSlot))
+                val sectionLabel = templateSectionLabel(slot, endSlot)
                 val timeRange = "${slot.start}-${endSlot?.end ?: slot.end}"
                 views.setTextViewText(R.id.widgetMeta1, "${display.dayLabel} · $sectionLabel · $timeRange")
                 views.setTextViewText(R.id.widgetMeta2, course.location.ifBlank { course.teacher.ifBlank { "地点未填写" } })
@@ -202,9 +211,31 @@ object WidgetUpdater {
             val range = o.optString("range", "")
             val start = o.optString("start", range.substringBefore("-", "00:00")).ifBlank { "00:00" }
             val end = o.optString("end", range.substringAfter("-", "23:59")).ifBlank { "23:59" }
-            map[slot] = Slot(slot, o.optString("label", "第${slot}节"), range.ifBlank { "$start-$end" }, start, end)
+            val displayNumber = if (o.has("displayNumber") && !o.isNull("displayNumber")) {
+                o.optInt("displayNumber").takeIf { it > 0 }
+            } else null
+            map[slot] = Slot(
+                slot,
+                o.optString("label", "第${slot}节"),
+                range.ifBlank { "$start-$end" },
+                start,
+                end,
+                displayNumber,
+                o.optString("slotKey", "")
+            )
         }
         return map
+    }
+
+    internal fun templateSectionLabel(start: Slot, end: Slot?): String {
+        val finish = end ?: start
+        if (start.slot == finish.slot) return start.label.ifBlank {
+            start.displayNumber?.let { "第${it}节" } ?: "课节"
+        }
+        if (start.displayNumber != null && finish.displayNumber != null) {
+            return "第${start.displayNumber}-${finish.displayNumber}节"
+        }
+        return "${start.label.ifBlank { start.slotKey }}–${finish.label.ifBlank { finish.slotKey }}"
     }
 
     private fun parseCourses(array: JSONArray, activeTermKey: String): List<Course> {

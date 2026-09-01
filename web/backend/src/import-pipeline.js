@@ -1,4 +1,9 @@
 import crypto from 'crypto';
+import {
+  normalizeCourseSlotFields,
+  templateRangesAreAdjacent,
+  templateRangesOverlap
+} from '../../shared/schedule-template.js';
 
 export const IMPORT_REASON_CODES = Object.freeze({
   MISSING_NAME: 'MISSING_NAME',
@@ -448,28 +453,30 @@ function normalizeMergeCourse(original = {}, order = 0) {
 
 function exactFingerprint(course) {
   return [
-    course.accountId || '', course.termKey || '', normalizedIdentityText(course.name),
-    Number(course.day), Number(course.startSlot), Number(course.endSlot), weeksFingerprint(course),
+    course.accountId || '', course.termKey || '', course.scheduleTemplateId || '', normalizedIdentityText(course.name),
+    Number(course.day), course.startSlotKey || Number(course.startSlot), course.endSlotKey || Number(course.endSlot), weeksFingerprint(course),
     normalizedIdentityText(course.location), normalizedIdentityText(course.teacher)
   ].join('|');
 }
 
 function mergeFingerprint(course, options = {}) {
   return [
-    course.accountId || '', options.separateSources ? (course.source === 'jwxt' ? 'jwxt' : 'non-jwxt') : '', course.termKey || '', normalizedIdentityText(course.name),
+    course.accountId || '', options.separateSources ? (course.source === 'jwxt' ? 'jwxt' : 'non-jwxt') : '', course.termKey || '', course.scheduleTemplateId || '', normalizedIdentityText(course.name),
     Number(course.day), weeksFingerprint(course), normalizedIdentityText(course.location), normalizedIdentityText(course.teacher)
   ].join('|');
 }
 
 function scheduleFingerprint(course) {
-  return [course.accountId || '', course.termKey || '', Number(course.day)].join('|');
+  return [course.accountId || '', course.termKey || '', course.scheduleTemplateId || '', Number(course.day)].join('|');
 }
 
-function rangesAreAdjacent(left, right) {
+function rangesAreAdjacent(left, right, options = {}) {
+  if (options.scheduleTemplate) return templateRangesAreAdjacent(left, right, options.scheduleTemplate, options);
   return Number(left.endSlot) + 1 === Number(right.startSlot);
 }
 
-function rangesOverlap(left, right) {
+function rangesOverlap(left, right, options = {}) {
+  if (options.scheduleTemplate) return templateRangesOverlap(left, right, options.scheduleTemplate);
   return Number(left.startSlot) <= Number(right.endSlot)
     && Number(right.startSlot) <= Number(left.endSlot);
 }
@@ -508,11 +515,14 @@ export function mergeCourseRecords(courses = [], options = {}) {
 
     const mergeKey = mergeFingerprint(course, options);
     const sameIdentityRanges = identityMap.get(mergeKey) || [];
-    const adjacent = sameIdentityRanges.find((kept) => kept._mergeWeeksKnown && course._mergeWeeksKnown && rangesAreAdjacent(kept, course));
+    const adjacent = sameIdentityRanges.find((kept) => kept._mergeWeeksKnown && course._mergeWeeksKnown && rangesAreAdjacent(kept, course, options));
     if (adjacent) {
       const beforeRange = { startSlot: adjacent.startSlot, endSlot: adjacent.endSlot };
       adjacent.endSlot = course.endSlot;
       adjacent.slot = adjacent.startSlot;
+      if (course.sourceEndSlot !== undefined) adjacent.sourceEndSlot = course.sourceEndSlot;
+      if (course.endSlotKey) adjacent.endSlotKey = course.endSlotKey;
+      if (course.scheduleTemplateId) adjacent.scheduleTemplateId = course.scheduleTemplateId;
       events.push({
         reasonCode: IMPORT_REASON_CODES.MERGED_SAME_COURSE,
         keptCandidateId: adjacent._candidateId || null,
@@ -531,7 +541,7 @@ export function mergeCourseRecords(courses = [], options = {}) {
 
     const scheduled = scheduleMap.get(scheduleFingerprint(course)) || [];
     for (const other of scheduled) {
-      if (!rangesOverlap(other, course) || !overlap(effectiveCourseWeeks(other), effectiveCourseWeeks(course))) continue;
+      if (!rangesOverlap(other, course, options) || !overlap(effectiveCourseWeeks(other), effectiveCourseWeeks(course))) continue;
       if (mergeFingerprint(other, options) === mergeKey) continue;
       warnings.push({
         reasonCode: IMPORT_REASON_CODES.CONFLICTING_SCHEDULE,
@@ -866,13 +876,33 @@ export function analyzeJwxtImport(data, context = {}) {
     }
     const adjusted = /调|tk|adjust/i.test(`${source} ${item.tkbz || ''} ${item.bz || ''} ${name}`);
     const storedName = adjusted && !name.includes('调') ? `【调】${name}` : name;
+    const sourceSlots = {
+      sourceStartSlot: sectionResult.startSlot,
+      sourceEndSlot: sectionResult.endSlot
+    };
+    const mappedSlots = context.scheduleTemplate
+      ? normalizeCourseSlotFields(sourceSlots, context.scheduleTemplate)
+      : {
+          slot: sectionResult.startSlot,
+          startSlot: sectionResult.startSlot,
+          endSlot: sectionResult.endSlot,
+          startSlotKey: `P${sectionResult.startSlot}`,
+          endSlotKey: `P${sectionResult.endSlot}`,
+          scheduleTemplateId: String(context.scheduleTemplateId || 'legacy-default'),
+          ...sourceSlots
+        };
     generated.push({
       userId: context.userId || '',
       accountId: context.accountId || '',
       day: dayResult.day,
-      slot: sectionResult.startSlot,
-      startSlot: sectionResult.startSlot,
-      endSlot: sectionResult.endSlot,
+      slot: mappedSlots?.slot || sectionResult.startSlot,
+      startSlot: mappedSlots?.startSlot || sectionResult.startSlot,
+      endSlot: mappedSlots?.endSlot || sectionResult.endSlot,
+      sourceStartSlot: sectionResult.startSlot,
+      sourceEndSlot: sectionResult.endSlot,
+      startSlotKey: mappedSlots?.startSlotKey || `P${sectionResult.startSlot}`,
+      endSlotKey: mappedSlots?.endSlotKey || `P${sectionResult.endSlot}`,
+      scheduleTemplateId: mappedSlots?.scheduleTemplateId || String(context.scheduleTemplateId || 'legacy-default'),
       name: storedName,
       originalName: name,
       shortName: '',
@@ -901,7 +931,7 @@ export function analyzeJwxtImport(data, context = {}) {
   if (collected.truncated) warnings.push({ reasonCode: IMPORT_REASON_CODES.UNSUPPORTED_STRUCTURE, message: '候选数量超过安全上限，诊断已截断。' });
   const parsingMs = elapsed(parsingStart);
   const mergeStart = nowMs();
-  const mergeResult = mergeCourseRecords(generated);
+  const mergeResult = mergeCourseRecords(generated, { scheduleTemplate: context.scheduleTemplate });
   const mergeMs = elapsed(mergeStart);
   warnings.push(...mergeResult.warnings);
 

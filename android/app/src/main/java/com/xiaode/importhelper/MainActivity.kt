@@ -12,6 +12,9 @@ import android.content.ComponentName
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
 import android.net.Uri
@@ -34,12 +37,20 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.FileProvider
+import androidx.webkit.WebViewAssetLoader
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -61,7 +72,7 @@ import java.util.TimeZone
 import javax.net.ssl.SSLException
 
 /**
- * 小德课表 App v29 · Web v39 MySQL 测试版
+ * 小德课表 App v33 · Web v41 local-first / ScheduleTemplate 版
  *
  * 主页面：WebView 承载网页版小德课表。
  * 导入页：原生 WebView 打开教务系统，用户自己登录；App 读取 Cookie 请求课表 JSON，上传到后端。
@@ -69,7 +80,8 @@ import javax.net.ssl.SSLException
  * Web 端通过 window.XiaoDeAndroid.startImport(JSON.stringify({...})) 把一次性导入码交给 App，
  * 用户无需复制/粘贴导入码。
  *
- * v29 同步 Web v39：保留稳定 App 壳，并配套后端 MySQL 本地测试能力；多账号、备份恢复、课程文件分享、原生日历提醒继续保留：
+ * v33 保留稳定 WebView App 壳，但页面 shell 从 appassets 加载，课表读写由 Room 本地 API 承担；
+ * WorkManager 在后台按账号推送 outbox、拉取快照并刷新 Widget。多账号、备份恢复、课程文件分享、原生日历提醒继续保留：
  * - 备份导出：Android Bridge 接管 JSON 下载，保存到系统下载目录或 App 下载目录。
  * - 备份导入：支持 WebView file input 选择 .json 文件。
  * - 分享课表/课程提醒：Web 可调用 Android 原生分享面板，分享到微信、QQ、文件等。
@@ -88,6 +100,7 @@ class MainActivity : Activity() {
         const val STATE_IMPORT_TERM_LABEL = "state_import_term_label"
         const val STATE_IMPORT_XNM = "state_import_xnm"
         const val STATE_IMPORT_XQM = "state_import_xqm"
+        const val STATE_IMPORT_SCHEDULE_TEMPLATE = "state_import_schedule_template"
         const val STATE_IMPORT_REPLACE = "state_import_replace"
         const val STATE_IMPORT_CREATED_AT = "state_import_created_at"
         const val STATE_IMPORT_MODE = "state_import_mode"
@@ -118,6 +131,7 @@ class MainActivity : Activity() {
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val offlineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private lateinit var root: LinearLayout
     private lateinit var statusText: TextView
@@ -152,19 +166,29 @@ class MainActivity : Activity() {
     private var inImportMode = false
     private var lastDiagnostics: String = ""
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private lateinit var localApiRouter: LocalApiRouter
+    private lateinit var assetLoader: WebViewAssetLoader
+    @Volatile private var appPageTrusted = false
+    private var syncReceiverRegistered = false
+    private val syncStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == SyncScheduler.ACTION_SYNC_STATUS) emitNativeSyncStatus()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
-        configureWebViews()
         loadPrefs()
+        localApiRouter = LocalApiRouter(this) { serverUrl }
+        configureWebViews()
         bindEvents()
-
-        if (serverUrl.isNotBlank()) {
-            openXiaodeWeb(serverUrl)
-        } else {
+        registerSyncStatusReceiver()
+        offlineScope.launch { localApiRouter.initialize() }
+        openXiaodeWeb(serverUrl)
+        if (serverUrl.isBlank()) {
             showServerSettings(true)
-            setStatus("欢迎使用小德课表。第一次使用请填写服务器地址，例如 http://10.20.4.13:3001 或 ngrok 地址。")
+            setStatus("本地课表已打开。首次联网同步前请填写服务器地址，例如 http://10.20.4.13:3001。")
         }
         restoreImportContext(savedInstanceState)
     }
@@ -178,6 +202,7 @@ class MainActivity : Activity() {
             outState.putString(STATE_IMPORT_TERM_LABEL, fields["selectedTermLabel"])
             outState.putString(STATE_IMPORT_XNM, fields["xnm"])
             outState.putString(STATE_IMPORT_XQM, fields["xqm"])
+            outState.putString(STATE_IMPORT_SCHEDULE_TEMPLATE, fields["scheduleTemplateId"])
             outState.putBoolean(STATE_IMPORT_REPLACE, context.replace)
             outState.putLong(STATE_IMPORT_CREATED_AT, context.createdAt)
             outState.putBoolean(STATE_IMPORT_MODE, inImportMode)
@@ -193,7 +218,8 @@ class MainActivity : Activity() {
             "accountId" to savedState.getString(STATE_IMPORT_ACCOUNT, "").trim(),
             "selectedTermLabel" to savedState.getString(STATE_IMPORT_TERM_LABEL, "").trim(),
             "xnm" to savedState.getString(STATE_IMPORT_XNM, "").trim(),
-            "xqm" to savedState.getString(STATE_IMPORT_XQM, "").trim()
+            "xqm" to savedState.getString(STATE_IMPORT_XQM, "").trim(),
+            "scheduleTemplateId" to savedState.getString(STATE_IMPORT_SCHEDULE_TEMPLATE, "legacy-default").trim()
         )
         activeImportContext = ImportTaskContext.restore(
             fields,
@@ -349,9 +375,12 @@ class MainActivity : Activity() {
 
     @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     private fun configureWebViews() {
+        assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
         CookieManager.getInstance().setAcceptCookie(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            CookieManager.getInstance().setAcceptThirdPartyCookies(appWebView, true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(appWebView, false)
             CookieManager.getInstance().setAcceptThirdPartyCookies(importWebView, true)
         }
 
@@ -359,12 +388,44 @@ class MainActivity : Activity() {
         configureCommonWebView(importWebView, forXiaode = false)
 
         appWebView.addJavascriptInterface(AndroidBridge(), "XiaoDeAndroid")
+        appWebView.addJavascriptInterface(LocalBridge(), "XiaoDeLocalBridge")
         appWebView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                appPageTrusted = isTrustedAppUrl(url.orEmpty())
+                super.onPageStarted(view, url, favicon)
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val target = request?.url?.toString().orEmpty()
+                if (request?.isForMainFrame == true && !isTrustedAppUrl(target)) {
+                    openExternalUrl(target)
+                    return true
+                }
+                return false
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                val target = url.orEmpty()
+                if (!isTrustedAppUrl(target)) {
+                    openExternalUrl(target)
+                    return true
+                }
+                return false
+            }
+
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                return request?.url?.let { assetLoader.shouldInterceptRequest(it) }
+                    ?: super.shouldInterceptRequest(view, request)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (!url.isNullOrBlank() && url != "about:blank") {
-                    setStatus("小德课表已打开。登录后点击“功能中心 → 教务导入”。")
+                appPageTrusted = isTrustedAppUrl(url.orEmpty())
+                if (appPageTrusted) {
+                    setStatus("本地课表已打开；修改会先保存到手机，联网后自动同步。")
                     injectBridgeReadyHint(view)
+                    emitNativeSyncStatus()
                 }
             }
         }
@@ -406,7 +467,8 @@ class MainActivity : Activity() {
             domStorageEnabled = true
             databaseEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            mixedContentMode = if (forXiaode) WebSettings.MIXED_CONTENT_NEVER_ALLOW else WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            allowFileAccess = false
             useWideViewPort = forXiaode
             loadWithOverviewMode = false
             builtInZoomControls = !forXiaode
@@ -447,13 +509,51 @@ class MainActivity : Activity() {
         )
     }
 
+    inner class LocalBridge {
+        @JavascriptInterface
+        fun request(requestId: String, method: String, path: String, bodyJson: String, authToken: String) {
+            if (requestId.isBlank()) return
+            offlineScope.launch {
+                val envelope = if (!appPageTrusted) {
+                    JSONObject().put("ok", false).put("status", 403).put("message", "本地桥仅允许小德内置页面访问")
+                } else try {
+                    val result = localApiRouter.handle(method, path, bodyJson, authToken)
+                    JSONObject()
+                        .put("ok", true)
+                        .put("status", result.status)
+                        .put("data", result.data)
+                } catch (error: LocalApiException) {
+                    JSONObject()
+                        .put("ok", false)
+                        .put("status", error.status)
+                        .put("message", error.message ?: "本地请求失败")
+                        .put("data", error.data)
+                } catch (error: Throwable) {
+                    JSONObject()
+                        .put("ok", false)
+                        .put("status", 500)
+                        .put("message", error.message ?: error.javaClass.simpleName)
+                }
+                val script = "window.__xiaodeNativeResolve(" +
+                    JSONObject.quote(requestId) + "," + JSONObject.quote(envelope.toString()) + ");"
+                mainHandler.post {
+                    try { appWebView.evaluateJavascript(script, null) } catch (_: Throwable) {}
+                    emitNativeSyncStatus()
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun getServerUrl(): String = if (appPageTrusted) serverUrl else ""
+    }
+
     inner class AndroidBridge {
         @JavascriptInterface
         fun syncWidgetData(payload: String) {
+            if (!appPageTrusted) return
             mainHandler.post {
                 try {
-                    if (payload.isBlank() || payload.length < 10) return@post
-                    WidgetDataStore.savePayload(this@MainActivity, payload)
+                    // v33 widgets query Room directly. This legacy callback only asks for a refresh.
                     XiaoDeWidgetProvider.updateAllWidgets(this@MainActivity)
                 } catch (_: Throwable) {
                     // 小组件同步失败不能影响主 App 使用。
@@ -463,6 +563,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun startImport(payload: String) {
+            if (!appPageTrusted) return
             mainHandler.post {
                 try {
                     val json = JSONObject(payload)
@@ -471,6 +572,7 @@ class MainActivity : Activity() {
                     val selectedTermLabel = json.optString("selectedTermLabel", "").trim()
                     val xnm = json.optString("xnm", "").trim()
                     val xqm = json.optString("xqm", "").trim()
+                    val scheduleTemplateId = json.optString("scheduleTemplateId", "legacy-default").trim()
                     val bridgeServer = normalizeServerUrl(json.optString("serverUrl", serverUrl))
                     if (code.length < 6) {
                         setStatus("网页传来的导入码无效，请在网页端重新生成。")
@@ -497,7 +599,8 @@ class MainActivity : Activity() {
                         xnm = xnm,
                         xqm = xqm,
                         replace = json.optBoolean("replace", true),
-                        createdAt = System.currentTimeMillis()
+                        createdAt = System.currentTimeMillis(),
+                        scheduleTemplateId = scheduleTemplateId
                     )
                     showFrozenTerm(activeImportContext)
                     replaceCheck.isChecked = activeImportContext?.replace ?: true
@@ -515,6 +618,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun saveBackupFile(filename: String, content: String) {
+            if (!appPageTrusted) return
             Thread {
                 try {
                     val savedTo = saveTextAsDownload(filename, content)
@@ -533,6 +637,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun shareTextFile(filename: String, content: String, mimeType: String) {
+            if (!appPageTrusted) return
             mainHandler.post {
                 try {
                     shareTextAsFile(filename, content, mimeType)
@@ -546,16 +651,18 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun hasCalendarPermission(): Boolean {
-            return this@MainActivity.hasCalendarPermission()
+            return appPageTrusted && this@MainActivity.hasCalendarPermission()
         }
 
         @JavascriptInterface
         fun requestCalendarPermission() {
+            if (!appPageTrusted) return
             mainHandler.post { requestCalendarPermissionFromWeb() }
         }
 
         @JavascriptInterface
         fun listCalendars(): String {
+            if (!appPageTrusted) return "[]"
             return try {
                 listWritableCalendarsJson().toString()
             } catch (t: Throwable) {
@@ -569,6 +676,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun syncCourseReminders(payload: String) {
+            if (!appPageTrusted) return
             Thread {
                 val result = try {
                     syncCourseRemindersToCalendar(payload)
@@ -858,13 +966,52 @@ class MainActivity : Activity() {
         } catch (_: Throwable) {}
     }
 
+    private fun registerSyncStatusReceiver() {
+        if (syncReceiverRegistered) return
+        val filter = IntentFilter(SyncScheduler.ACTION_SYNC_STATUS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(syncStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(syncStatusReceiver, filter)
+        }
+        syncReceiverRegistered = true
+    }
+
+    private fun emitNativeSyncStatus() {
+        if (!::localApiRouter.isInitialized || !::appWebView.isInitialized) return
+        offlineScope.launch {
+            val status = try { localApiRouter.syncStatus() } catch (_: Throwable) { return@launch }
+            val script = "window.dispatchEvent(new CustomEvent('xiaode-sync-status',{detail:" + status.toString() + "}));"
+            mainHandler.post {
+                try { appWebView.evaluateJavascript(script, null) } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::localApiRouter.isInitialized) offlineScope.launch { localApiRouter.initialize() }
+    }
+
+    override fun onDestroy() {
+        if (syncReceiverRegistered) {
+            try { unregisterReceiver(syncStatusReceiver) } catch (_: Throwable) {}
+            syncReceiverRegistered = false
+        }
+        offlineScope.cancel()
+        try { appWebView.destroy() } catch (_: Throwable) {}
+        try { importWebView.destroy() } catch (_: Throwable) {}
+        super.onDestroy()
+    }
+
     private fun bindEvents() {
         settingsButton.setOnClickListener { showServerSettings(settingsPanel.visibility != View.VISIBLE) }
         copyDiagnosticsButton.setOnClickListener { copyDiagnostics() }
         addWidgetButton.setOnClickListener { requestPinWidget() }
         openServerButton.setOnClickListener { openServerFromInput() }
-        reloadAppButton.setOnClickListener { if (serverUrl.isNotBlank()) appWebView.reload() else openServerFromInput() }
-        homeButton.setOnClickListener { if (serverUrl.isNotBlank()) openXiaodeWeb(serverUrl) else openServerFromInput() }
+        reloadAppButton.setOnClickListener { appWebView.reload() }
+        homeButton.setOnClickListener { openXiaodeWeb(serverUrl) }
         importButton.setOnClickListener { fetchAndUploadSchedule() }
         reloadJwxtButton.setOnClickListener { reloadJwxt() }
         importMoreButton.setOnClickListener { toggleImportMore() }
@@ -908,15 +1055,32 @@ class MainActivity : Activity() {
         }
         serverUrl = cleanServer
         saveServer()
+        offlineScope.launch {
+            localApiRouter.initialize()
+        }
         openXiaodeWeb(serverUrl)
     }
 
     private fun openXiaodeWeb(url: String) {
         showAppScreen()
         serverInput.setText(url)
-        setStatus("正在打开小德课表：$url")
-        appWebView.loadUrl(url)
+        setStatus(if (url.isBlank()) "正在打开本地课表" else "正在打开本地课表并准备同步：$url")
+        appPageTrusted = false
+        appWebView.loadUrl(OfflineContract.APP_ASSET_HOME)
         showServerSettings(false)
+    }
+
+    private fun isTrustedAppUrl(url: String): Boolean = try {
+        val uri = Uri.parse(url)
+        uri.scheme == "https" && uri.host == "appassets.androidplatform.net" && uri.path.orEmpty().startsWith("/assets/")
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun openExternalUrl(url: String) {
+        if (url.isBlank() || url == "about:blank") return
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        catch (_: Throwable) { setStatus("无法打开外部链接") }
     }
 
     private fun reloadJwxt() {
@@ -930,7 +1094,7 @@ class MainActivity : Activity() {
         selectedTermText.text = if (context == null) {
             "学期由课表页明确选择后冻结"
         } else {
-            "本次请求：${context.selectedTermLabel}（xnm=${context.xnm}，xqm=${context.xqm}）"
+            "本次请求：${context.selectedTermLabel}（xnm=${context.xnm}，xqm=${context.xqm}，模板=${context.scheduleTemplateId}）"
         }
     }
 
@@ -970,6 +1134,7 @@ class MainActivity : Activity() {
                 .put("selectedTermLabel", context.selectedTermLabel)
                 .put("xnm", context.xnm)
                 .put("xqm", context.xqm)
+                .put("scheduleTemplateId", context.scheduleTemplateId)
                 .put("replace", context.replace)
             val upload = postJson("$cleanServer/api/import-code/$codeForImport/submit", body)
             if (!upload.optBoolean("ok")) throw IOException(upload.optString("message", "上传失败"))
@@ -1098,7 +1263,7 @@ class MainActivity : Activity() {
         appWebView.postDelayed({
             try {
                 if (appWebView.url.isNullOrBlank() || appWebView.url == "about:blank") {
-                    if (serverUrl.isNotBlank()) appWebView.loadUrl(serverUrl)
+                    appWebView.loadUrl(OfflineContract.APP_ASSET_HOME)
                 } else {
                     appWebView.reload()
                 }
@@ -1439,7 +1604,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildDiagnosticText(currentStatus: String): String = buildString {
-        appendLine("小德课表 App v32 · Web v41 移动课表合并与紧凑布局版")
+        appendLine("小德课表 App v33 · Web v41 local-first / ScheduleTemplate 版")
         appendLine("serverUrl=${serverUrl.ifBlank { serverInput.text?.toString() ?: "" }}")
         appendLine("appUrl=${if (::appWebView.isInitialized) appWebView.url else ""}")
         appendLine("importMode=$inImportMode")

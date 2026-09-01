@@ -14,6 +14,7 @@ class ImportTaskContextTest {
         var editableXnm = "2026"
         var editableXqm = "3"
         var selectedTermLabel = "2026-2027 第一学期"
+        var selectedScheduleTemplateId = "school-a-v1"
         val frozen = ImportTaskContext(
             serverBaseUrl = "http://127.0.0.1:3001",
             importCode = "ABCDEF12",
@@ -22,20 +23,24 @@ class ImportTaskContextTest {
             xnm = editableXnm,
             xqm = editableXqm,
             replace = true,
-            createdAt = 1L
+            createdAt = 1L,
+            scheduleTemplateId = selectedScheduleTemplateId
         )
         activeAccountId = "account-b"
         editableXnm = "2030"
         editableXqm = "12"
         selectedTermLabel = "2030-2031 第二学期"
+        selectedScheduleTemplateId = "school-b-v1"
         assertEquals("account-a", frozen.accountId)
         assertEquals("2026-2027 第一学期", frozen.selectedTermLabel)
         assertEquals("2026", frozen.xnm)
         assertEquals("3", frozen.xqm)
+        assertEquals("school-a-v1", frozen.scheduleTemplateId)
         assertNotEquals(activeAccountId, frozen.accountId)
         assertNotEquals(editableXnm, frozen.xnm)
         assertNotEquals(editableXqm, frozen.xqm)
         assertNotEquals(selectedTermLabel, frozen.selectedTermLabel)
+        assertNotEquals(selectedScheduleTemplateId, frozen.scheduleTemplateId)
     }
 
     @Test
@@ -48,7 +53,8 @@ class ImportTaskContextTest {
             xnm = "2024",
             xqm = "3",
             replace = true,
-            createdAt = 2L
+            createdAt = 2L,
+            scheduleTemplateId = "school-b-v1"
         )
         val restored = ImportTaskContext.restore(original.persistedFields(), original.replace, original.createdAt)
         assertEquals(original, restored)
